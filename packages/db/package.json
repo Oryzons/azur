@@ -1,0 +1,27 @@
+{
+  "name": "@bleu-calanque/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate": "prisma generate",
+    "migrate": "prisma migrate dev",
+    "seed": "tsx prisma/seed.ts",
+    "reset-admin-password": "tsx prisma/reset-admin-password.ts",
+    "promote:admin": "tsx prisma/promote-admin.ts",
+    "clear:coupon-redemptions": "tsx prisma/clear-coupon-redemptions.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.1.0"
+  },
+  "devDependencies": {
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^17.4.2",
+    "prisma": "^6.1.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  },
+  "prisma": {
+    "schema": "prisma/schema.prisma"
+  }
+}

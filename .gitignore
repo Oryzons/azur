@@ -1,0 +1,11 @@
+node_modules
+dist
+.env
+**/dev.db
+**/*.db
+**/*.db-journal
+**/*.sqlite
+**/*.sqlite-journal
+*.log
+*.tsbuildinfo
+.DS_Store

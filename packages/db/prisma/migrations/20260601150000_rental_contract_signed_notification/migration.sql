@@ -1,0 +1,2 @@
+-- Nouvelle valeur InternalNotificationKind : RENTAL_CONTRACT_SIGNED
+-- (SQLite : kind est du TEXT, aucune contrainte ENUM côté base)

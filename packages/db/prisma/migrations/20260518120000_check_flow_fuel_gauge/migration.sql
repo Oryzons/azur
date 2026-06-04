@@ -1,0 +1,1 @@
+-- SQLite: questionType est stocké en TEXT ; FUEL_GAUGE est accepté sans ALTER.

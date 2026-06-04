@@ -1,0 +1,901 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  STAFF
+  AGENT
+  /// Portail propriétaire : calendrier et indisponibilités sur ses bateaux uniquement.
+  OWNER
+}
+
+model User {
+  id           String       @id @default(uuid())
+  email        String       @unique
+  passwordHash String
+  firstName    String
+  lastName     String
+  civility     String?      // ex: "M.", "Mme", "Mx"
+  phone        String?
+  birthDate    DateTime?
+  nationality  String?
+  address      String?
+  city         String?
+  postalCode   String?
+  country      String?
+  company      String?
+  avatarUrl    String?      // URL ou data URL (MVP)
+  role         UserRole     @default(STAFF)
+  /// Fiche Member OWNER liée (portail propriétaire).
+  ownerMemberId String?
+  isActive     Boolean      @default(true)
+  mustChangePassword Boolean @default(false)
+  lastLoginAt  DateTime?
+  createdAt    DateTime     @default(now())
+  refreshTokens RefreshToken[]
+  auditLogs    AuditLog[]
+  checkFlowSubmissions CheckFlowSubmission[]
+  ownerMember  Member?      @relation("OwnerPortalAccount", fields: [ownerMemberId], references: [id], onDelete: SetNull)
+  unavailabilitiesCreated BoatUnavailability[] @relation("UnavailabilityCreatedBy")
+
+  @@index([ownerMemberId])
+}
+
+/// Journal d’audit métier (rétention ~60 j par défaut, voir AUDIT_RETENTION_DAYS).
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  action    String
+  entity    String
+  entityId  String?
+  oldData   String?  // JSON sérialisé
+  newData   String?  // JSON sérialisé
+  ip        String?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([entity, entityId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+model RefreshToken {
+  id         String    @id @default(uuid())
+  userId     String
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  userAgent  String?
+  ip         String?
+  lastSeenAt DateTime  @default(now())
+  createdAt  DateTime  @default(now())
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([lastSeenAt])
+}
+
+// =========================
+// Catalogue : Flotilles / Bateaux
+// =========================
+
+enum BoatType {
+  BATEAU_A_MOTEUR
+  SEMI_RIGIDE
+  VOILIER
+  CATAMARAN
+  TRIMARAN
+  PENICHE
+  YACHT
+  JETSKI
+  ENGIN_NAUTIQUE
+  AUTRE
+}
+
+model Fleet {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  boats     Boat[]
+  prices    FleetPrice[]
+
+  linkedAnnouncements Announcement[] @relation("AnnouncementLinkedFleet")
+  newBoatAnnouncements Announcement[] @relation("AnnouncementNewBoatFleet")
+
+  @@unique([name])
+}
+
+model Boat {
+  id            String    @id @default(uuid())
+  brand         String
+  name          String
+  model         String
+  boatType      BoatType
+  maxPassengers Int
+  ownerMemberId String?
+  fleetId       String?
+  /// Caution location (centimes), défaut 2500 €.
+  depositAmountCents Int @default(250000)
+  /// JSON sérialisé des informations supplémentaires (généralités, dimensions, motorisation, équipements, assurance).
+  detailsJson   String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  fleet         Fleet?    @relation(fields: [fleetId], references: [id], onDelete: SetNull)
+  ownerMember   Member?   @relation("MemberOwnedBoats", fields: [ownerMemberId], references: [id], onDelete: SetNull)
+  unavailabilities BoatUnavailability[]
+  photos        BoatPhoto[]
+  reservations  Reservation[]
+  prices        BoatPrice[]
+  announcements Announcement[]
+
+  @@index([fleetId])
+  @@index([ownerMemberId])
+  @@unique([name, model, brand])
+}
+
+model BoatPhoto {
+  id        String   @id @default(uuid())
+  boatId    String
+  url       String   // URL ou data URL MVP
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  boat      Boat     @relation(fields: [boatId], references: [id], onDelete: Cascade)
+
+  @@index([boatId])
+}
+
+// =========================
+// Membres (clients / propriétaires / équipe)
+// =========================
+
+enum MemberRole {
+  ADMIN
+  AGENT
+  OWNER
+  CLIENT
+}
+
+enum ClientType {
+  PARTICULIER
+  PROFESSIONNEL
+  ASSOCIATION
+}
+
+enum Civility {
+  NONE
+  M
+  MME
+  MX
+}
+
+model Member {
+  id         String     @id @default(uuid())
+  role       MemberRole
+  firstName  String
+  lastName   String
+  email      String     @unique
+  phone      String?
+  isActive   Boolean    @default(true)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  // Owner
+  ownerSince DateTime?
+  ownerCompany String?
+  ownerIban  String?
+  ownerAddress String?
+
+  // Client
+  clientType ClientType?
+  civility   Civility?
+  birthDate  DateTime?
+  nationality String?
+  address    String?
+  city       String?
+  postalCode String?
+  country    String?
+  internalNote String?
+  /// Badge employé Airbus (ex. A345678), renseigné à la réservation.
+  airbusBadge  String?
+  /// Photo du badge Airbus (justificatif).
+  airbusBadgePhotoUrl String?
+  /// Numéro de pièce d'identité (réutilisable pour prochaines réservations).
+  clientIdNumber String?
+  /// Numéro de permis bateau / certificat (réutilisable pour prochaines réservations).
+  licenseNumber  String?
+  cniFrontUrl  String?
+  cniBackUrl   String?
+  boatLicenseFrontUrl String?
+  boatLicenseBackUrl  String?
+
+  // Admin / Agent permissions
+  permManageMembers     Boolean @default(false)
+  permManageBoats       Boolean @default(false)
+  permManageReservations Boolean @default(false)
+
+  boatsOwned Boat[] @relation("MemberOwnedBoats")
+  reservationsAsClient Reservation[] @relation("ReservationClient")
+  memberCredits MemberCredit[]
+  ownerPortalUsers User[] @relation("OwnerPortalAccount")
+}
+
+// =========================
+// Réservations
+// =========================
+
+enum PaymentChannel {
+  ONLINE
+  OFFLINE
+}
+
+enum ReservationStatus {
+  PENDING_PAYMENT
+  RESERVED_PAID
+  CANCELLED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+model Reservation {
+  id           String   @id @default(uuid())
+  boatId       String
+  title        String
+  startAt      DateTime
+  endAt        DateTime
+  color        String?
+
+  // snapshot client (même si le member est supprimé)
+  clientMemberId String?
+  clientType     ClientType?
+  civility       Civility?
+  clientEmail    String?
+  clientFirstName String?
+  clientLastName  String?
+  clientPhone    String?
+  clientBirthDate DateTime?
+  clientAddress  String?
+  clientPostalCode String?
+  clientCity     String?
+  clientCountry  String?
+
+  passengerCount Int?
+  hasChildren   Boolean @default(false)
+  childrenCount Int?
+  internalNote  String?
+
+  paymentChannel PaymentChannel @default(ONLINE)
+  rentalPriceCents Int?
+  depositAmountCents Int?
+  discountPercent Int?
+  couponCode    String?
+  airbusBadge   String?
+  installments  Int? // 1 ou 2
+  settlementNote String?
+
+  status            ReservationStatus @default(PENDING_PAYMENT)
+  paymentCapturedAt DateTime?
+  depositCapturedAt DateTime?
+  confirmationEmailSentAt DateTime?
+  /// Total TTC à payer en ligne (location + extras après remises), en centimes.
+  totalDueCents     Int?
+  stripeCheckoutSessionId String?
+  stripeDepositPaymentIntentId String?
+  paymentLinkUrl    String?
+  cancelledAt   DateTime?
+
+  /// JSON sérialisé du payload complet du wizard côté admin (champ libre).
+  detailsJson   String?
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  boat         Boat     @relation(fields: [boatId], references: [id], onDelete: Cascade)
+  clientMember Member?  @relation("ReservationClient", fields: [clientMemberId], references: [id], onDelete: SetNull)
+
+  extras       ReservationExtra[]
+  refunds      ReservationRefund[]
+  checkFlowSubmissions CheckFlowSubmission[]
+  rentalContract       ReservationRentalContract?
+  creditsIssued          MemberCredit[]
+  creditUsages           MemberCreditUsage[]
+
+  @@index([boatId])
+  @@index([clientMemberId])
+  @@index([startAt])
+}
+
+/// Plage d'indisponibilité (maintenance, usage perso, etc.) — affichée sur le calendrier.
+enum UnavailabilityReason {
+  REPAIR
+  PRIVATE_USE
+  WEATHER
+  OTHER
+}
+
+model BoatUnavailability {
+  id              String   @id @default(uuid())
+  boatId          String
+  title           String
+  reason          UnavailabilityReason @default(OTHER)
+  note            String?
+  startAt         DateTime
+  endAt           DateTime
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  boat      Boat  @relation(fields: [boatId], references: [id], onDelete: Cascade)
+  createdBy User? @relation("UnavailabilityCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([boatId])
+  @@index([startAt])
+}
+
+enum RefundResolutionType {
+  REFUND
+  STORE_CREDIT
+}
+
+model ReservationRefund {
+  id            String   @id @default(uuid())
+  reservationId String
+  amountCents   Int
+  note          String?
+  resolutionType RefundResolutionType @default(REFUND)
+  refundedAt    DateTime @default(now())
+  reservation   Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+
+  @@index([reservationId])
+}
+
+/// Avoir client — solde réutilisable sur une prochaine location.
+model MemberCredit {
+  id                   String   @id @default(uuid())
+  memberId               String?
+  clientEmail          String?
+  sourceReservationId  String?
+  initialAmountCents   Int
+  remainingAmountCents Int
+  note                 String?
+  expiresAt            DateTime?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  member            Member?      @relation(fields: [memberId], references: [id], onDelete: SetNull)
+  sourceReservation Reservation? @relation(fields: [sourceReservationId], references: [id], onDelete: SetNull)
+  usages            MemberCreditUsage[]
+
+  @@index([memberId])
+  @@index([clientEmail])
+  @@index([sourceReservationId])
+}
+
+model MemberCreditUsage {
+  id            String   @id @default(uuid())
+  creditId      String
+  reservationId String
+  amountCents   Int
+  usedAt        DateTime @default(now())
+
+  credit      MemberCredit @relation(fields: [creditId], references: [id], onDelete: Cascade)
+  reservation Reservation  @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+
+  @@index([creditId])
+  @@index([reservationId])
+}
+
+// =========================
+// Extras
+// =========================
+
+enum ExtraPriceKind {
+  PERCENT
+  EURO
+}
+
+enum ExtraBillingUnit {
+  LOCATION
+  JOUR
+  SEMAINE
+}
+
+model Extra {
+  id            String         @id @default(uuid())
+  name          String         @unique
+  description   String
+  priceKind     ExtraPriceKind
+  priceValue    Float          // percent 0-100; euro >0
+  billingUnit   ExtraBillingUnit
+  vatRate       Float
+  stock         Int?
+  paymentChannel PaymentChannel @default(ONLINE)
+  enabled       Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  reservationLinks ReservationExtra[]
+}
+
+model ReservationExtra {
+  reservationId String
+  extraId       String
+  quantity      Int      @default(1)
+
+  reservation   Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  extra         Extra       @relation(fields: [extraId], references: [id], onDelete: Cascade)
+
+  @@id([reservationId, extraId])
+  @@index([extraId])
+}
+
+// =========================
+// Coupons
+// =========================
+
+enum CouponDiscountKind {
+  PERCENT
+  FIXED
+}
+
+model Coupon {
+  id            String   @id @default(uuid())
+  code          String   @unique
+  internalLabel String
+  discountKind  CouponDiscountKind
+  discountValue Float
+  validFrom     DateTime
+  validUntil    DateTime?
+  enabled       Boolean  @default(true)
+
+  // règle saison optionnelle (avr-sept)
+  seasonMaxFullUsesPerClient Int?
+  seasonDegradedDiscountValue Float?
+  /// Ex. coupon Airbus : badge employé obligatoire à la réservation.
+  requiresAirbusBadge Boolean @default(false)
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  redemptions   CouponRedemption[]
+}
+
+model CouponRedemption {
+  id        String   @id @default(uuid())
+  couponId  String
+  clientKey String
+  redeemedAt DateTime @default(now())
+  coupon    Coupon   @relation(fields: [couponId], references: [id], onDelete: Cascade)
+
+  @@index([couponId])
+  @@index([clientKey])
+  @@index([redeemedAt])
+}
+
+// =========================
+// Annonces
+// =========================
+
+enum AnnouncementStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum AnnouncementLinkKind {
+  EXISTING_FLEET
+  EXISTING_BOAT
+  NEW_FLEET
+  NEW_BOAT
+}
+
+model Announcement {
+  id          String   @id @default(uuid())
+  title       String
+  navalBase   String
+  status      AnnouncementStatus @default(ACTIVE)
+
+  linkKind    AnnouncementLinkKind
+  linkedFleetId String?
+  linkedBoatId  String?
+  newFleetName  String?
+  newBoatBrand  String?
+  newBoatName   String?
+  newBoatModel  String?
+  newBoatType   BoatType?
+  newBoatMaxPassengers Int?
+  newBoatFleetId String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  linkedFleet Fleet? @relation("AnnouncementLinkedFleet", fields: [linkedFleetId], references: [id], onDelete: SetNull)
+  linkedBoat  Boat?  @relation(fields: [linkedBoatId], references: [id], onDelete: SetNull)
+  newBoatFleet Fleet? @relation("AnnouncementNewBoatFleet", fields: [newBoatFleetId], references: [id], onDelete: SetNull)
+  photos      AnnouncementPhoto[]
+
+  @@index([linkedFleetId])
+  @@index([linkedBoatId])
+}
+
+model AnnouncementPhoto {
+  id             String   @id @default(uuid())
+  announcementId String
+  url            String   // URL ou data URL MVP
+  sortOrder      Int      @default(0)
+  createdAt      DateTime @default(now())
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+
+  @@index([announcementId])
+}
+
+// =========================
+// Tarifs par périodes
+// =========================
+
+model PricingPeriod {
+  id        String   @id @default(uuid())
+  name      String
+  startDate DateTime
+  endDate   DateTime
+  active    Boolean  @default(true)
+  /// BASSE | MOYENNE | HAUTE — périodes saisonnières fixes (tarifs).
+  code      String?  @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  prices     BoatPrice[]
+  fleetPrices FleetPrice[]
+
+  @@index([startDate])
+  @@index([endDate])
+}
+
+enum PricingUnit {
+  DEMI_JOURNEE
+  JOURNEE
+  SEMAINE
+}
+
+model BoatPrice {
+  id        String   @id @default(uuid())
+  boatId    String
+  periodId  String
+  unit      PricingUnit
+  amountCents Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  boat      Boat    @relation(fields: [boatId], references: [id], onDelete: Cascade)
+  period    PricingPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+
+  @@unique([boatId, periodId, unit])
+  @@index([boatId])
+  @@index([periodId])
+}
+
+model FleetPrice {
+  id           String       @id @default(uuid())
+  fleetId      String
+  periodId     String
+  unit         PricingUnit
+  amountCents  Int
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  fleet        Fleet         @relation(fields: [fleetId], references: [id], onDelete: Cascade)
+  period       PricingPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+
+  @@unique([fleetId, periodId, unit])
+  @@index([fleetId])
+  @@index([periodId])
+}
+
+// =========================
+// Paramètres (site / banque / notifications / booking / emails / contrats)
+// =========================
+
+model CompanySettings {
+  id                  String  @id @default("company_settings")
+  legalName           String
+  tradeName           String
+  professionalPhone   String
+  domiciliation       String
+  companyType         String
+  vatNumber           String
+  siret               String
+  rcsRegistration     String
+  nafCode             String
+  shareCapital        String
+  addressLine         String
+  city                String
+  postalCode          String
+  country             String
+  contactEmail        String
+  contactPhone        String
+  publicSiteUrl       String
+  brandName           String
+  adsVatRatePercent   Float
+  vatBasePercent      Float
+  vatPercent          Float
+  /// Signature exploitant appliquée automatiquement aux contrats si renseignée.
+  contractOperatorSignatureDataUrl String?
+  /// Lieu de prise en charge bateau (contrats, emails).
+  departureLocation   String  @default("")
+  /// Lieu de retour bateau (contrats, emails).
+  arrivalLocation     String  @default("")
+  updatedAt           DateTime @updatedAt
+}
+
+model BankSettings {
+  id            String  @id @default("bank_settings")
+  accountHolder String
+  iban          String
+  bic           String
+  bankName      String
+  updatedAt     DateTime @updatedAt
+}
+
+model NotificationsSettings {
+  id                    String  @id @default("notifications_settings")
+  adminEmailsCsv        String
+  onReservationCreated   Boolean @default(true)
+  onReservationUpdated   Boolean @default(true)
+  onPaymentCaptured      Boolean @default(true)
+  onRefundCreated        Boolean @default(true)
+  onReservationCancelled Boolean @default(true)
+  onReservationRestored  Boolean @default(true)
+  onReservationDeleted   Boolean @default(true)
+  onCheckInDone          Boolean @default(true)
+  onCheckOutDone         Boolean @default(true)
+  updatedAt             DateTime @updatedAt
+}
+
+enum InternalNotificationKind {
+  CHECK_IN_DONE
+  CHECK_OUT_DONE
+  PAYMENT_ONLINE_CAPTURED
+  RESERVATION_CREATED
+  RESERVATION_UPDATED
+  RESERVATION_CANCELLED
+  RESERVATION_RESTORED
+  RESERVATION_REFUNDED
+  RESERVATION_PARTIAL_REFUND
+  RESERVATION_DELETED
+  RESERVATION_PAID
+  RENTAL_CONTRACT_SIGNED
+  /// Nouvelle réservation sur un bateau d'un propriétaire (destinataire = compte OWNER).
+  RESERVATION_ON_OWNER_BOAT
+  UNAVAILABILITY_CREATED
+  UNAVAILABILITY_UPDATED
+  UNAVAILABILITY_DELETED
+}
+
+model InternalNotification {
+  id                String                   @id @default(uuid())
+  kind              InternalNotificationKind
+  title             String
+  message           String
+  /// null = notification équipe back-office ; sinon ciblage utilisateur (ex. propriétaire).
+  recipientUserId   String?
+  reservationId     String?
+  unavailabilityId  String?
+  submissionId      String?
+  boatName          String?
+  clientName        String?
+  href              String?
+  read              Boolean                  @default(false)
+  createdAt         DateTime                 @default(now())
+
+  @@index([read, createdAt])
+  @@index([createdAt])
+  @@index([recipientUserId, read, createdAt])
+}
+
+model BookingSettings {
+  id                   String  @id @default("booking_settings")
+  defaultNavalBase     String
+  departureLocation    String  @default("")
+  arrivalLocation      String  @default("")
+  requireDeposit       Boolean @default(true)
+  depositDefaultAmount String
+  paymentsOnlineEnabled Boolean @default(true)
+  updatedAt            DateTime @updatedAt
+}
+
+model EmailSettings {
+  id                   String  @id @default("email_settings")
+  fromName             String
+  fromEmail            String
+  replyToEmail         String
+  confirmationsEnabled Boolean @default(true)
+  updatedAt            DateTime @updatedAt
+}
+
+model PublicSiteSettings {
+  id           String  @id @default("public_site_settings")
+  publicSiteUrl String
+  brandName     String
+  contactEmail  String
+  contactPhone  String
+  addressLine   String
+  city          String
+  postalCode    String
+  country       String
+  departureLocation String @default("")
+  arrivalLocation   String @default("")
+  updatedAt     DateTime @updatedAt
+}
+
+model SeoSettings {
+  id              String   @id @default("seo_settings")
+  metaTitle       String
+  metaDescription String
+  ogImageUrl      String
+  updatedAt       DateTime @updatedAt
+}
+
+model NauticManagerSettings {
+  id              String   @id @default("nautic_manager_settings")
+  enabled         Boolean  @default(false)
+  baseUrl         String
+  apiKey          String
+  webhookSecret   String
+  syncOwners      Boolean  @default(true)
+  syncBoats       Boolean  @default(true)
+  syncReservations Boolean @default(true)
+  updatedAt       DateTime @updatedAt
+}
+
+enum PartnerKind {
+  NAUTIC_BASE
+  MAINTENANCE
+  INSURANCE
+  OTHER
+}
+
+/// Prestations rattachées : valeurs JSON dans `linkedOfferingsJson` (BOAT_LICENSE | FLUVIAL | BOAT_RENTAL).
+
+model Partner {
+  id                  String      @id @default(uuid())
+  name                String
+  kind                PartnerKind
+  linkedOfferingsJson String      @default("[]") // JSON: ["BOAT_LICENSE","FLUVIAL",...]
+  description         String      @default("")
+  logoUrl             String      @default("")
+  price               String      @default("")
+  active              Boolean     @default(true)
+  contactName         String
+  contactEmail        String
+  contactPhone        String
+  note                String
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+}
+
+// =========================
+// Check-in / Check-out (tablette agents)
+// =========================
+
+enum CheckFlowKind {
+  CHECK_IN
+  CHECK_OUT
+}
+
+enum CheckQuestionType {
+  TEXT
+  BOOLEAN
+  SELECT
+  PHOTO
+  FUEL_GAUGE
+}
+
+model CheckFlowSettings {
+  id                      String   @id @default("check_flow_settings")
+  checkOutUsesCheckInForm Boolean  @default(false)
+  updatedAt               DateTime @updatedAt
+}
+
+model CheckFlowQuestion {
+  id            String            @id @default(uuid())
+  kind          CheckFlowKind
+  sortOrder     Int               @default(0)
+  label         String
+  helpText      String?
+  questionType  CheckQuestionType
+  required      Boolean           @default(true)
+  optionsJson   String?           // JSON string[] pour SELECT
+  photoMinCount Int               @default(1)
+  photoMaxCount Int               @default(3)
+  enabled       Boolean           @default(true)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  answers       CheckFlowAnswer[]
+
+  @@index([kind, sortOrder])
+}
+
+model CheckFlowSubmission {
+  id                String        @id @default(uuid())
+  reservationId     String
+  kind              CheckFlowKind
+  submittedByUserId String?
+  submittedAt       DateTime      @default(now())
+  summaryJson         String?
+  clientSignatureUrl  String?
+  agentSignatureUrl   String?
+
+  reservation       Reservation   @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  submittedBy       User?         @relation(fields: [submittedByUserId], references: [id], onDelete: SetNull)
+  answers           CheckFlowAnswer[]
+
+  @@unique([reservationId, kind])
+  @@index([kind, submittedAt])
+  @@index([reservationId])
+}
+
+model CheckFlowAnswer {
+  id           String   @id @default(uuid())
+  submissionId String
+  questionId   String
+  valueText    String?
+  valueJson    String?
+  commentText  String?
+
+  submission   CheckFlowSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  question     CheckFlowQuestion   @relation(fields: [questionId], references: [id], onDelete: Restrict)
+
+  @@unique([submissionId, questionId])
+  @@index([questionId])
+}
+
+model Contract {
+  id                String   @id @default(uuid())
+  name              String
+  title             String
+  description       String
+  requiredDocuments String   // JSON stringified array (SQLite)
+  cancellationTerms String
+  rentalTerms       String
+  active            Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+/// Contrat de location signé lié à une réservation (portail client).
+model ReservationRentalContract {
+  id                       String    @id @default(uuid())
+  reservationId            String    @unique
+  contractNumber           Int       @unique
+  signToken                String    @unique @default(uuid())
+  contractTemplateId       String?
+  clientSignatureDataUrl   String?
+  operatorSignatureDataUrl String?
+  signedAt                 DateTime?
+  contractSignEmailSentAt  DateTime?
+  contractSignedEmailSentAt DateTime?
+  /// HTML complet (2 pages) prêt pour impression / téléchargement.
+  signedHtml               String?
+  signedHtmlSha256         String?
+  /// Horodatage du modèle CGV (`Contract.updatedAt`) au moment de la signature.
+  contractTemplateVersionAt DateTime?
+  contractLocked           Boolean   @default(false)
+  /// Empreinte des données réservation au moment de la signature (détection de divergence).
+  signedReservationSnapshotSha256 String?
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
+
+  reservation Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+
+  @@index([signToken])
+}

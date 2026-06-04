@@ -1,0 +1,6 @@
+dist/
+# Ne pas committer de JS compilé dans src/ (Vite résout src/ et prendrait un index.js obsolète).
+src/**/*.js
+src/**/*.js.map
+src/**/*.d.ts
+!src/**/*.ts

@@ -1,0 +1,1 @@
+-- SQLite: les enums Prisma sont stockés en TEXT, aucune contrainte à migrer.
