@@ -85,19 +85,26 @@ export type ServerNotificationKind =
   | 'RESERVATION_PARTIAL_REFUND'
   | 'RESERVATION_DELETED'
   | 'RESERVATION_PAID'
-  | 'RENTAL_CONTRACT_SIGNED';
+  | 'RENTAL_CONTRACT_SIGNED'
+  | 'RESERVATION_ON_OWNER_BOAT'
+  | 'UNAVAILABILITY_CREATED'
+  | 'UNAVAILABILITY_UPDATED'
+  | 'UNAVAILABILITY_DELETED';
 
 export function serverKindToAppKind(kind: ServerNotificationKind): AppNotificationKind {
   if (kind === 'PAYMENT_ONLINE_CAPTURED' || kind === 'RESERVATION_PAID') return 'reservation_paid';
   if (kind === 'RENTAL_CONTRACT_SIGNED') return 'reservation_contract_signed';
   if (kind === 'CHECK_IN_DONE') return 'check_in_done';
   if (kind === 'CHECK_OUT_DONE') return 'check_out_done';
-  if (kind === 'RESERVATION_CREATED') return 'reservation_created';
+  if (kind === 'RESERVATION_ON_OWNER_BOAT' || kind === 'RESERVATION_CREATED') return 'reservation_created';
   if (kind === 'RESERVATION_UPDATED') return 'reservation_updated';
   if (kind === 'RESERVATION_CANCELLED') return 'reservation_cancelled';
   if (kind === 'RESERVATION_RESTORED') return 'reservation_restored';
   if (kind === 'RESERVATION_REFUNDED') return 'reservation_refunded';
   if (kind === 'RESERVATION_PARTIAL_REFUND') return 'reservation_partial_refund';
   if (kind === 'RESERVATION_DELETED') return 'reservation_deleted';
+  if (kind === 'UNAVAILABILITY_CREATED' || kind === 'UNAVAILABILITY_UPDATED' || kind === 'UNAVAILABILITY_DELETED') {
+    return 'reservation_updated';
+  }
   return 'reservation_updated';
 }

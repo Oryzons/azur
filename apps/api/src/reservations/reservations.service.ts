@@ -5,6 +5,7 @@ import {
   ExtraBillingUnit,
   ExtraPriceKind,
   PaymentChannel,
+  PaymentMethod,
   ReservationRefund,
   ReservationStatus,
 } from '@prisma/client';
@@ -26,6 +27,11 @@ import {
   type UpsertReservationInput,
   normalizeAirbusBadge,
   upsertReservationSchema,
+  computeInstallmentAmounts,
+  clampDepositPercent,
+  installmentLabel,
+  DEFAULT_DEPOSIT_PERCENT,
+  countsTowardCouponUsage,
 } from '@bleu-calanque/shared';
 import { couponRequiresAirbusBadge } from '../coupons/airbus-coupon.util';
 import { EntityChecksService } from '../common/validation/entity-checks';
@@ -35,12 +41,14 @@ import { AuditService } from '../common/audit/audit.service';
 import { AuditAction, AuditEntity } from '../common/audit/audit.constants';
 import { refundsAuditSnapshot, reservationAuditSnapshot } from '../common/audit/audit-snapshots';
 import type { UpsertReservationDto } from './reservations.dto';
-import { computeReservationTotalDueCents } from '../pricing/reservation-pricing';
+import { computeReservationTotalDueCents, reservationPricingInputFromRow } from '../pricing/reservation-pricing';
 import { mapReservationExtrasForPricing } from '../pricing/reservation-pricing-map';
 import { computeBoatSlotCatalogEuros } from '../pricing/catalog-location-pricing';
 import { CouponsService } from '../coupons/coupons.service';
 import { MemberCreditsService } from '../member-credits/member-credits.service';
 import { RentalContractsService } from '../rental-contracts/rental-contracts.service';
+import { ExtrasService } from '../extras/extras.service';
+import { isStripeChargeAlreadyRefunded } from '../common/stripe/stripe-error-message';
 
 function parseDateOrNull(v: string | null | undefined): Date | null {
   if (!v) return null;
@@ -62,11 +70,13 @@ export class ReservationsService {
     private readonly coupons: CouponsService,
     private readonly memberCredits: MemberCreditsService,
     private readonly rentalContracts: RentalContractsService,
+    private readonly extras: ExtrasService,
   ) {}
 
   private readonly reservationInclude = {
     boat: true,
     refunds: { orderBy: { refundedAt: 'asc' as const } },
+    installmentPlan: { orderBy: { sequence: 'asc' as const } },
     checkFlowSubmissions: { select: { kind: true } },
     rentalContract: {
       select: {
@@ -163,10 +173,62 @@ export class ReservationsService {
     } as T;
   }
 
+  /** Données minimales pour l’espace propriétaire (date + horaires, sans client ni paiement). */
+  private mapReservationForOwnerApi(row: Record<string, unknown>) {
+    const boat = row.boat as { id: string; name: string; detailsJson?: string | null } | null | undefined;
+    return {
+      id: row.id,
+      boatId: row.boatId,
+      title: 'Location',
+      startAt: row.startAt,
+      endAt: row.endAt,
+      color: '#64748B',
+      status: ReservationStatus.RESERVED_PAID,
+      boat: boat ? { id: boat.id, name: boat.name, detailsJson: null } : undefined,
+      extras: [],
+      refunds: [],
+      installmentPlan: [],
+      checkFlowSubmissions: [],
+      rentalContract: null,
+      clientMemberId: null,
+      clientType: null,
+      civility: null,
+      clientEmail: null,
+      clientFirstName: null,
+      clientLastName: null,
+      clientPhone: null,
+      clientBirthDate: null,
+      clientAddress: null,
+      clientPostalCode: null,
+      clientCity: null,
+      clientCountry: null,
+      passengerCount: null,
+      hasChildren: false,
+      childrenCount: null,
+      internalNote: null,
+      paymentChannel: PaymentChannel.ONLINE,
+      rentalPriceCents: null,
+      depositAmountCents: null,
+      discountPercent: null,
+      couponCode: null,
+      airbusBadge: null,
+      installments: null,
+      depositPercent: null,
+      settlementNote: null,
+      paymentCapturedAt: null,
+      depositCapturedAt: null,
+      detailsJson: null,
+    };
+  }
+
   async list(user: AuthUser) {
     const where =
       user.role === UserRole.OWNER
-        ? { boat: { ownerMemberId: await this.ownerScope.requireOwnerMemberId(user) } }
+        ? {
+            boat: { ownerMemberId: await this.ownerScope.requireOwnerMemberId(user) },
+            cancelledAt: null,
+            status: { not: ReservationStatus.CANCELLED },
+          }
         : {};
     const rows = await this.prisma.reservation.findMany({
       where,
@@ -175,6 +237,7 @@ export class ReservationsService {
         extras: { select: { extraId: true, quantity: true }, orderBy: { extraId: 'asc' } },
         boat: { select: { id: true, name: true, detailsJson: true } },
         refunds: { orderBy: { refundedAt: 'asc' } },
+        installmentPlan: { orderBy: { sequence: 'asc' } },
         checkFlowSubmissions: { select: { kind: true } },
         rentalContract: {
           select: {
@@ -187,7 +250,11 @@ export class ReservationsService {
         },
       },
     });
-    return rows.map((row) => this.mapReservationForApi(row));
+    return rows.map((row) =>
+      user.role === UserRole.OWNER
+        ? this.mapReservationForOwnerApi(row as Record<string, unknown>)
+        : this.mapReservationForApi(row),
+    );
   }
 
   private parseBody(raw: UpsertReservationDto): UpsertReservationInput {
@@ -271,6 +338,7 @@ export class ReservationsService {
       couponCode: input.couponCode?.replaceAll(/\s+/g, '').toUpperCase() || null,
       airbusBadge: airbusBadge ?? null,
       installments: input.installments ?? null,
+      depositPercent: input.depositPercent ?? null,
       settlementNote: input.settlementNote ?? null,
       paymentCapturedAt: parseDateOrNull(input.paymentCapturedAt ?? null),
       depositCapturedAt: parseDateOrNull(input.depositCapturedAt ?? null),
@@ -281,9 +349,25 @@ export class ReservationsService {
     };
   }
 
+  private async assertExtrasStockForInput(
+    input: UpsertReservationInput,
+    excludeReservationId?: string,
+  ): Promise<void> {
+    const start = parseDateOrNull(input.start);
+    const end = parseDateOrNull(input.end);
+    if (!start || !end) return;
+    await this.extras.assertStockForSlot({
+      startAt: start,
+      endAt: end,
+      excludeReservationId,
+      items: input.extras ?? [],
+    });
+  }
+
   async create(raw: UpsertReservationDto) {
     const input = this.parseBody(raw);
     await this.assertRelations(input);
+    await this.assertExtrasStockForInput(input);
     const airbusBadge = await this.resolveAirbusBadgeForSave(input);
     const data = this.buildReservationData(input, undefined, airbusBadge);
 
@@ -318,12 +402,17 @@ export class ReservationsService {
 
     if (full) {
       full = await this.syncComputedTotalDueCents(full);
-      await this.coupons.recordRedemptionForReservation({
-        couponCode: full.couponCode,
-        clientMemberId: full.clientMemberId,
-        clientEmail: full.clientEmail,
-        startAt: full.startAt,
+      await this.syncInstallmentPlan(full.id, {
+        installments: input.installments ?? null,
+        depositPercent: input.depositPercent ?? null,
+        methods: input.installmentMethods as PaymentMethod[] | undefined,
       });
+      const refetchedPlan = await this.prisma.reservation.findUnique({
+        where: { id: full.id },
+        include: { extras: { include: { extra: true } }, ...this.reservationInclude },
+      });
+      if (refetchedPlan) full = refetchedPlan;
+      await this.syncCouponRedemptionForReservation(full);
       await this.internalNotifications.emitReservationChangeNotifications(null, full);
       await this.audit.logCreate(AuditEntity.RESERVATION, full.id, reservationAuditSnapshot(full));
       if (full.refunds.length) {
@@ -356,6 +445,20 @@ export class ReservationsService {
     });
   }
 
+  async settleInstallment(id: string, sequence: number, paid: boolean) {
+    if (sequence !== 1 && sequence !== 2) {
+      throw new BadRequestException('Numéro d’échéance invalide.');
+    }
+    const existing = await this.prisma.reservation.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException('Réservation introuvable.');
+    await this.notifications.setInstallmentPaid(id, sequence, paid);
+    const full = await this.prisma.reservation.findUnique({
+      where: { id },
+      include: { extras: { include: { extra: true } }, ...this.reservationInclude },
+    });
+    return full ? this.mapReservationForApi(full) : full;
+  }
+
   async sendContractEmail(id: string) {
     await this.assertReservationEditable(id);
     const existing = await this.prisma.reservation.findUnique({ where: { id } });
@@ -377,6 +480,10 @@ export class ReservationsService {
   }
 
   /** Vérifie côté Stripe toutes les résas en attente de paiement (sans webhook). */
+  async syncStripeFees(): Promise<{ updated: number }> {
+    return this.notifications.syncMissingStripeFees();
+  }
+
   async syncPendingStripePayments(): Promise<{ synced: string[] }> {
     if (!this.notifications.isStripeConfigured()) {
       return { synced: [] };
@@ -415,19 +522,98 @@ export class ReservationsService {
     return reservation.totalDueCents ?? reservation.rentalPriceCents ?? 0;
   }
 
+  /** Montant déjà encaissé (toutes échéances réglées, Stripe + espèces). */
+  private totalPaidCents(reservation: {
+    paymentCapturedAt: Date | null;
+    totalDueCents: number | null;
+    rentalPriceCents: number | null;
+    installmentPlan: { status: string; amountCents: number }[];
+  }): number {
+    const paidInstallments = reservation.installmentPlan.filter((p) => p.status === 'PAID');
+    if (paidInstallments.length > 0) {
+      return paidInstallments.reduce((sum, p) => sum + p.amountCents, 0);
+    }
+    if (!reservation.paymentCapturedAt) return 0;
+    return this.refundableCapCents(reservation);
+  }
+
   private computeRefundStatus(
-    reservation: { totalDueCents: number | null; rentalPriceCents: number | null },
+    reservation: {
+      totalDueCents: number | null;
+      rentalPriceCents: number | null;
+      paymentCapturedAt: Date | null;
+      installmentPlan: { status: string; amountCents: number }[];
+    },
     refunds: Pick<ReservationRefund, 'amountCents'>[],
   ): ReservationStatus {
     const totalRefunded = refunds.reduce((sum, r) => sum + r.amountCents, 0);
-    const cap = this.refundableCapCents(reservation);
+    const cap = this.totalPaidCents(reservation) || this.refundableCapCents(reservation);
     if (cap > 0 && totalRefunded >= cap - 1) return 'REFUNDED';
     return 'PARTIALLY_REFUNDED';
+  }
+
+  /** Importe en BDD les remboursements Stripe déjà effectués mais non enregistrés (statut partiel/total). */
+  async syncStripeRefunds(id: string): Promise<{ importedCents: number; status: ReservationStatus | null }> {
+    if (!this.notifications.isStripeConfigured()) {
+      return { importedCents: 0, status: null };
+    }
+
+    const existing = await this.prisma.reservation.findUnique({
+      where: { id },
+      include: this.reservationInclude,
+    });
+    if (!existing) throw new NotFoundException('Réservation introuvable.');
+
+    const stripeRefundedCents = await this.notifications.getStripeTotalRefundedCents(id);
+    const dbRefundedCents = existing.refunds.reduce((sum, r) => sum + r.amountCents, 0);
+    const delta = stripeRefundedCents - dbRefundedCents;
+    if (delta < 1) {
+      return { importedCents: 0, status: existing.status };
+    }
+
+    await this.prisma.reservationRefund.create({
+      data: {
+        reservationId: id,
+        amountCents: delta,
+        note: 'Synchronisé depuis Stripe',
+      },
+    });
+
+    const full = await this.prisma.reservation.findUnique({
+      where: { id },
+      include: this.reservationInclude,
+    });
+    if (!full) throw new NotFoundException('Réservation introuvable.');
+
+    const newStatus = this.computeRefundStatus(full, full.refunds);
+    const updated = await this.prisma.reservation.update({
+      where: { id },
+      data: {
+        status: newStatus,
+        detailsJson: this.buildDetailsJsonWithRefunds(full.detailsJson, full.refunds, newStatus, {
+          cancelledAt: full.cancelledAt,
+        }),
+      },
+      include: this.reservationInclude,
+    });
+
+    await this.syncCouponRedemptionForReservation(updated);
+    await this.internalNotifications.emitReservationChangeNotifications(existing, updated);
+
+    if (existing.status !== newStatus) {
+      await this.audit.logStatusChange(AuditEntity.RESERVATION, id, existing.status, newStatus, {
+        title: updated.title,
+        source: 'stripe_refund_sync',
+      });
+    }
+
+    return { importedCents: delta, status: newStatus };
   }
 
   private async syncComputedTotalDueCents<
     T extends {
       id: string;
+      createdAt: Date;
       rentalPriceCents: number | null;
       discountPercent: number | null;
       couponCode: string | null;
@@ -445,16 +631,10 @@ export class ReservationsService {
   >(reservation: T) {
     if (reservation.paymentCapturedAt) return reservation;
 
-    const computed = await computeReservationTotalDueCents(this.prisma, {
-      rentalPriceCents: reservation.rentalPriceCents,
-      discountPercent: reservation.discountPercent,
-      couponCode: reservation.couponCode,
-      clientMemberId: reservation.clientMemberId,
-      clientEmail: reservation.clientEmail,
-      startAt: reservation.startAt,
-      endAt: reservation.endAt,
-      extras: mapReservationExtrasForPricing(reservation.extras),
-    });
+    const computed = await computeReservationTotalDueCents(
+      this.prisma,
+      reservationPricingInputFromRow(reservation, mapReservationExtrasForPricing(reservation.extras, { onlineOnly: true })),
+    );
 
     const grossCents = computed;
     if (grossCents <= 0) {
@@ -508,6 +688,73 @@ export class ReservationsService {
     });
   }
 
+  /**
+   * Recrée/maj le plan d'échéances (1re = acompte, 2e = solde) d'une réservation.
+   * - installments !== 2 → supprime les échéances (paiement unique géré ailleurs).
+   * - installments === 2 → upsert des 2 échéances selon depositPercent + modes choisis.
+   * Les échéances déjà payées (PAID) ne sont jamais modifiées.
+   */
+  private async syncInstallmentPlan(
+    reservationId: string,
+    opts: { installments: number | null; depositPercent: number | null; methods?: PaymentMethod[] },
+  ): Promise<void> {
+    const reservation = await this.prisma.reservation.findUnique({
+      where: { id: reservationId },
+      select: {
+        totalDueCents: true,
+        depositPercent: true,
+        paymentChannel: true,
+        installmentPlan: { orderBy: { sequence: 'asc' } },
+      },
+    });
+    if (!reservation) return;
+
+    if (opts.installments !== 2) {
+      if (reservation.installmentPlan.length > 0) {
+        await this.prisma.reservationInstallment.deleteMany({ where: { reservationId } });
+      }
+      return;
+    }
+
+    const total = reservation.totalDueCents ?? 0;
+    const pct = clampDepositPercent(opts.depositPercent ?? reservation.depositPercent ?? DEFAULT_DEPOSIT_PERCENT);
+    const { depositCents, balanceCents } = computeInstallmentAmounts(total, pct);
+    const amounts = [depositCents, balanceCents];
+
+    const defaultMethod: PaymentMethod =
+      reservation.paymentChannel === PaymentChannel.OFFLINE ? PaymentMethod.CASH : PaymentMethod.ONLINE;
+
+    for (let i = 0; i < 2; i++) {
+      const sequence = i + 1;
+      const existing = reservation.installmentPlan.find((p) => p.sequence === sequence);
+      const method =
+        opts.methods?.[i] ?? (existing?.method as PaymentMethod | undefined) ?? defaultMethod;
+
+      if (existing) {
+        if (existing.status === 'PAID') continue;
+        await this.prisma.reservationInstallment.update({
+          where: { id: existing.id },
+          data: {
+            amountCents: amounts[i],
+            method,
+            label: installmentLabel(sequence, 2),
+          },
+        });
+      } else {
+        await this.prisma.reservationInstallment.create({
+          data: {
+            reservationId,
+            sequence,
+            label: installmentLabel(sequence, 2),
+            amountCents: amounts[i],
+            method,
+            status: 'PENDING',
+          },
+        });
+      }
+    }
+  }
+
   private adminStatusFromPrisma(status: ReservationStatus): string {
     const map: Record<ReservationStatus, string> = {
       PENDING_PAYMENT: 'pending_payment',
@@ -523,6 +770,7 @@ export class ReservationsService {
     detailsJson: string | null,
     refunds: ReservationRefund[],
     status: ReservationStatus,
+    cancellation?: { cancelledAt: Date | null },
   ): string | null {
     let details: Record<string, unknown> = {};
     if (detailsJson?.trim()) {
@@ -540,6 +788,10 @@ export class ReservationsService {
       ...(r.note ? { note: r.note } : {}),
     }));
     details.status = this.adminStatusFromPrisma(status);
+    const cancelledAt = cancellation?.cancelledAt ?? null;
+    if (cancelledAt) {
+      details.cancelledAt = cancelledAt.toISOString();
+    }
     return JSON.stringify(details);
   }
 
@@ -558,15 +810,17 @@ export class ReservationsService {
     const paidOnline =
       existing.paymentChannel === PaymentChannel.ONLINE && existing.paymentCapturedAt != null;
 
+    const stripeTargets = paidOnline
+      ? await this.notifications.getStripeRefundTargetsForReservation(existing)
+      : [];
+
+    const paidTotalCents = this.totalPaidCents(existing);
     let capCents = this.refundableCapCents(existing);
-    if (paidOnline && existing.stripeCheckoutSessionId && this.notifications.isStripeConfigured()) {
-      const stripeRemaining = await this.notifications.getStripeRefundableCents(
-        existing.stripeCheckoutSessionId,
-      );
-      if (stripeRemaining != null) {
-        capCents = capCents > 0 ? Math.min(capCents, stripeRemaining) : stripeRemaining;
-      }
+    if (paidTotalCents > 0) {
+      capCents = capCents > 0 ? Math.min(capCents, paidTotalCents) : paidTotalCents;
     }
+
+    const stripeRefundableTotal = stripeTargets.reduce((sum, t) => sum + t.refundableCents, 0);
 
     const alreadyRefunded = existing.refunds.reduce((sum, r) => sum + r.amountCents, 0);
     const remainingCents = Math.max(0, capCents - alreadyRefunded);
@@ -577,20 +831,62 @@ export class ReservationsService {
     }
 
     if (paidOnline) {
-      if (!existing.stripeCheckoutSessionId) {
-        throw new BadRequestException('Aucune session Stripe associée à cette réservation.');
+      const stripeRefundCents = Math.min(amountCents, stripeRefundableTotal);
+      const manualRefundCents = amountCents - stripeRefundCents;
+
+      if (stripeRefundCents > 0) {
+        if (!this.notifications.isStripeConfigured()) {
+          throw new BadRequestException('Stripe n’est pas configuré (STRIPE_SECRET_KEY).');
+        }
+        if (stripeTargets.length === 0) {
+          throw new BadRequestException(
+            'Aucun encaissement Stripe remboursable détecté pour l’acompte en ligne. Utilisez « Synchroniser Stripe » si le client a payé par CB. La part espèces/chèque se rembourse hors Stripe (enregistrement seul).',
+          );
+        }
+        let left = stripeRefundCents;
+        let stripeProcessedCents = 0;
+        for (const target of stripeTargets) {
+          if (left <= 0) break;
+          const chunk = Math.min(left, target.refundableCents);
+          try {
+            await this.notifications.refundStripePaymentTarget(target, chunk);
+            stripeProcessedCents += chunk;
+            left -= chunk;
+          } catch (err) {
+            if (isStripeChargeAlreadyRefunded(err)) {
+              // Tentative précédente ou remboursement manuel sur Stripe — poursuivre le solde hors ligne.
+              stripeProcessedCents += chunk;
+              left -= chunk;
+              continue;
+            }
+            throw err;
+          }
+        }
+        if (left > 0) {
+          throw new BadRequestException(
+            `Montant Stripe remboursable insuffisant (manque ${(left / 100).toFixed(2)} € sur la part CB).`,
+          );
+        }
       }
-      if (!this.notifications.isStripeConfigured()) {
-        throw new BadRequestException('Stripe n’est pas configuré (STRIPE_SECRET_KEY).');
+
+    }
+
+    const refundNoteParts = [input.note?.trim()].filter(Boolean) as string[];
+    if (paidOnline) {
+      const stripePart = Math.min(amountCents, stripeRefundableTotal);
+      const manualPart = amountCents - stripePart;
+      if (stripePart > 0 && manualPart > 0) {
+        refundNoteParts.push(
+          `Remb. Stripe ${(stripePart / 100).toFixed(2)} € + hors ligne ${(manualPart / 100).toFixed(2)} €`,
+        );
       }
-      await this.notifications.refundStripeCheckoutPayment(existing.stripeCheckoutSessionId, amountCents);
     }
 
     await this.prisma.reservationRefund.create({
       data: {
         reservationId: id,
         amountCents,
-        note: input.note?.trim() ? input.note.trim() : null,
+        note: refundNoteParts.length > 0 ? refundNoteParts.join(' — ') : null,
       },
     });
 
@@ -601,17 +897,24 @@ export class ReservationsService {
     if (!full) throw new NotFoundException('Réservation introuvable.');
 
     const newStatus = this.computeRefundStatus(full, full.refunds);
+    const shouldCancel = input.cancelReservation === true;
+    const cancelledAt =
+      existing.cancelledAt ?? (shouldCancel ? new Date() : null);
     const updated = await this.prisma.reservation.update({
       where: { id },
       data: {
         status: newStatus,
-        detailsJson: this.buildDetailsJsonWithRefunds(full.detailsJson, full.refunds, newStatus),
+        ...(cancelledAt && !existing.cancelledAt ? { cancelledAt } : {}),
+        detailsJson: this.buildDetailsJsonWithRefunds(full.detailsJson, full.refunds, newStatus, {
+          cancelledAt,
+        }),
       },
       include: this.reservationInclude,
     });
 
     if (!updated) throw new NotFoundException('Réservation introuvable.');
 
+    await this.syncCouponRedemptionForReservation(updated);
     await this.internalNotifications.emitReservationChangeNotifications(existing, updated);
 
     if (existing.status !== updated.status) {
@@ -714,6 +1017,8 @@ export class ReservationsService {
     start: Date,
     end: Date,
     existing: {
+      id: string;
+      createdAt: Date;
       discountPercent: number | null;
       couponCode: string | null;
       clientMemberId: string | null;
@@ -749,16 +1054,13 @@ export class ReservationsService {
         ? Math.round(catalog.depositEuros * 100)
         : existing.depositAmountCents;
 
-    const totalDueCents = await computeReservationTotalDueCents(this.prisma, {
-      rentalPriceCents,
-      discountPercent: existing.discountPercent,
-      couponCode: existing.couponCode,
-      clientMemberId: existing.clientMemberId,
-      clientEmail: existing.clientEmail,
-      startAt: start,
-      endAt: end,
-      extras: mapReservationExtrasForPricing(existing.extras),
-    });
+    const totalDueCents = await computeReservationTotalDueCents(
+      this.prisma,
+      reservationPricingInputFromRow(
+        { ...existing, rentalPriceCents, startAt: start, endAt: end },
+        mapReservationExtrasForPricing(existing.extras, { onlineOnly: true }),
+      ),
+    );
 
     const detailsJson = this.mergeCatalogInDetailsJson(
       existing.detailsJson,
@@ -877,7 +1179,11 @@ export class ReservationsService {
     id: string,
     input: Extract<ReservationResolutionInput, { type: 'refund' }>,
   ) {
-    const updated = await this.issueRefund(id, { amount: input.amount, note: input.note });
+    const updated = await this.issueRefund(id, {
+      amount: input.amount,
+      note: input.note,
+      cancelReservation: input.cancelReservation !== false,
+    });
     if (input.notifyClient !== false) {
       try {
         await this.notifications.sendRefundEmail(id, Math.round(input.amount * 100));
@@ -937,6 +1243,7 @@ export class ReservationsService {
       note: input.note ?? null,
     });
 
+    await this.syncCouponRedemptionForReservation(updated);
     await this.internalNotifications.emitReservationChangeNotifications(existing, updated);
     await this.audit.logStatusChange(
       AuditEntity.RESERVATION,
@@ -1066,6 +1373,7 @@ export class ReservationsService {
       include: { extras: { include: { extra: true } }, ...this.reservationInclude },
     });
 
+    await this.syncCouponRedemptionForReservation(updated);
     await this.internalNotifications.emitReservationChangeNotifications(existing, updated);
     await this.audit.logStatusChange(
       AuditEntity.RESERVATION,
@@ -1123,18 +1431,24 @@ export class ReservationsService {
     if (existing.status !== 'CANCELLED' && !existing.cancelledAt) {
       throw new BadRequestException('Cette réservation n’est pas annulée.');
     }
+    if (
+      existing.status === 'REFUNDED' ||
+      existing.status === 'PARTIALLY_REFUNDED' ||
+      existing.refunds.length > 0
+    ) {
+      throw new BadRequestException(
+        'Impossible de rétablir une réservation remboursée (totalement ou partiellement).',
+      );
+    }
 
     const nextStatus: ReservationStatus = existing.paymentCapturedAt ? 'RESERVED_PAID' : 'PENDING_PAYMENT';
-    const totalDueCents = await computeReservationTotalDueCents(this.prisma, {
-      rentalPriceCents: existing.rentalPriceCents,
-      discountPercent: existing.discountPercent,
-      couponCode: existing.couponCode,
-      clientMemberId: existing.clientMemberId,
-      clientEmail: existing.clientEmail,
-      startAt: existing.startAt,
-      endAt: existing.endAt,
-      extras: mapReservationExtrasForPricing(existing.extras),
-    });
+    const totalDueCents = await computeReservationTotalDueCents(
+      this.prisma,
+      reservationPricingInputFromRow(
+        existing,
+        mapReservationExtrasForPricing(existing.extras, { onlineOnly: true }),
+      ),
+    );
 
     const updated = await this.prisma.reservation.update({
       where: { id },
@@ -1151,12 +1465,7 @@ export class ReservationsService {
       include: { extras: { include: { extra: true } }, ...this.reservationInclude },
     });
 
-    const couponRecorded = await this.coupons.recordRedemptionForReservation({
-      couponCode: existing.couponCode,
-      clientMemberId: existing.clientMemberId,
-      clientEmail: existing.clientEmail,
-      startAt: existing.startAt,
-    });
+    const couponRecorded = await this.syncCouponRedemptionForReservation(updated);
 
     await this.internalNotifications.emitReservationChangeNotifications(existing, updated);
     await this.audit.logStatusChange(
@@ -1172,21 +1481,51 @@ export class ReservationsService {
 
   async syncStripePayment(id: string) {
     await this.assertReservationEditable(id);
-    const existing = await this.prisma.reservation.findUnique({ where: { id } });
+    const existing = await this.prisma.reservation.findUnique({
+      where: { id },
+      include: this.reservationInclude,
+    });
     if (!existing) throw new NotFoundException('Réservation introuvable.');
-    if (!existing.stripeCheckoutSessionId) {
+
+    const sessionIds = new Set<string>();
+    for (const inst of existing.installmentPlan) {
+      const sid = inst.stripeCheckoutSessionId?.trim();
+      if (sid) sessionIds.add(sid);
+    }
+    const rootSid = existing.stripeCheckoutSessionId?.trim();
+    if (rootSid) sessionIds.add(rootSid);
+
+    if (sessionIds.size === 0) {
       throw new BadRequestException('Aucune session Stripe associée à cette réservation.');
     }
-    const ok = await this.notifications.confirmPaymentFromCheckoutSession(existing.stripeCheckoutSessionId);
-    if (!ok) {
-      throw new BadRequestException('Paiement non confirmé côté Stripe pour cette session.');
+
+    let anyOk = false;
+    for (const sessionId of sessionIds) {
+      if (await this.notifications.confirmPaymentFromCheckoutSession(sessionId)) {
+        anyOk = true;
+      }
     }
-    await this.rentalContracts.ensureForReservation(id);
+    const refundSync = await this.syncStripeRefunds(id);
+    if (!anyOk && refundSync.importedCents < 1) {
+      throw new BadRequestException(
+        'Paiement non confirmé côté Stripe (aucune session payée trouvée — vérifiez acompte / solde).',
+      );
+    }
+    if (anyOk) {
+      await this.rentalContracts.ensureForReservation(id);
+    }
     const full = await this.prisma.reservation.findUnique({
       where: { id },
       include: { extras: { include: { extra: true } }, ...this.reservationInclude },
     });
-    return full ? this.mapReservationForApi(full) : full;
+    const mapped = full ? this.mapReservationForApi(full) : full;
+    if (mapped && typeof mapped === 'object') {
+      return {
+        ...mapped,
+        stripeRefundSync: refundSync,
+      };
+    }
+    return mapped;
   }
 
   private async maybeSendConfirmationAndRefetch(reservation: {
@@ -1240,6 +1579,8 @@ export class ReservationsService {
     const start = parseDateOrNull(input.start);
     const end = parseDateOrNull(input.end);
     if (!start || !end) throw new BadRequestException('Dates start/end invalides.');
+
+    await this.assertExtrasStockForInput(input, id);
 
     const scheduleChanged = this.scheduleChanged(existing, input.boatId, start, end);
     const hadSigned = Boolean(existing.rentalContract?.signedAt);
@@ -1307,12 +1648,18 @@ export class ReservationsService {
         full = await this.syncComputedTotalDueCents(full);
       }
 
-      await this.coupons.recordRedemptionForReservation({
-        couponCode: full.couponCode,
-        clientMemberId: full.clientMemberId,
-        clientEmail: full.clientEmail,
-        startAt: full.startAt,
+      await this.syncInstallmentPlan(full.id, {
+        installments: input.installments ?? null,
+        depositPercent: input.depositPercent ?? null,
+        methods: input.installmentMethods as PaymentMethod[] | undefined,
       });
+      const refetchedPlan = await this.prisma.reservation.findUnique({
+        where: { id: full.id },
+        include: { extras: { include: { extra: true } }, ...this.reservationInclude },
+      });
+      if (refetchedPlan) full = refetchedPlan;
+
+      await this.syncCouponRedemptionForReservation(full);
       await this.internalNotifications.emitReservationChangeNotifications(existing, full);
       if (existing.status !== full.status) {
         await this.audit.logStatusChange(
@@ -1349,6 +1696,46 @@ export class ReservationsService {
     return full ? this.mapReservationForApi(full) : full;
   }
 
+  private couponRedemptionSnapshot(row: {
+    couponCode: string | null;
+    clientMemberId: string | null;
+    clientEmail: string | null;
+    startAt: Date;
+    endAt: Date;
+    status: ReservationStatus;
+    cancelledAt: Date | null;
+    paymentCapturedAt: Date | null;
+  }) {
+    return {
+      couponCode: row.couponCode,
+      clientMemberId: row.clientMemberId,
+      clientEmail: row.clientEmail,
+      startAt: row.startAt,
+      endAt: row.endAt,
+      status: row.status,
+      cancelledAt: row.cancelledAt,
+      paymentCapturedAt: row.paymentCapturedAt,
+    };
+  }
+
+  private async syncCouponRedemptionForReservation(row: {
+    couponCode: string | null;
+    clientMemberId: string | null;
+    clientEmail: string | null;
+    startAt: Date;
+    endAt: Date;
+    status: ReservationStatus;
+    cancelledAt: Date | null;
+    paymentCapturedAt: Date | null;
+  }) {
+    const snapshot = this.couponRedemptionSnapshot(row);
+    if (countsTowardCouponUsage(snapshot, new Date())) {
+      return this.coupons.recordRedemptionForReservation(snapshot);
+    }
+    await this.coupons.removeRedemptionForReservation(snapshot);
+    return { recorded: false, removed: true };
+  }
+
   async remove(id: string) {
     await this.assertReservationEditable(id);
     const existing = await this.prisma.reservation.findUnique({
@@ -1358,6 +1745,12 @@ export class ReservationsService {
     if (!existing) throw new NotFoundException('Réservation introuvable.');
 
     try {
+      await this.coupons.removeRedemptionForReservation({
+        couponCode: existing.couponCode,
+        clientMemberId: existing.clientMemberId,
+        clientEmail: existing.clientEmail,
+        startAt: existing.startAt,
+      });
       await this.internalNotifications.emitReservationChangeNotifications(existing, null);
       await this.prisma.reservation.delete({ where: { id } });
       await this.audit.logDelete(AuditEntity.RESERVATION, id, reservationAuditSnapshot(existing));

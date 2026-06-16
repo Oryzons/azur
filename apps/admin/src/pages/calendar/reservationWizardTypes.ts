@@ -1,6 +1,7 @@
 import type { ClientType, Civility } from '@/stores/members';
 import type { CouponDiscountKind } from '@/stores/coupons';
 import type { ReservationStatus } from '@/lib/reservationStatus';
+import type { PaymentMethod } from '@bleu-calanque/shared';
 
 /** Calcul tarif étape 4 (remise manuelle + coupon catalogue + règle saison). */
 export type WizardPricingRecap = {
@@ -9,6 +10,10 @@ export type WizardPricingRecap = {
   priceNum: number;
   /** Total des extras sélectionnés (avant remises) */
   extrasTotal: number;
+  /** Extras réglés en ligne (inclus dans le total à payer / avoir). */
+  extrasOnlineTotal: number;
+  /** Extras réglés sur place (hors total en ligne et hors avoir). */
+  extrasOfflineTotal: number;
   /** Total location + extras (avant remises) */
   subtotal: number;
   /** Location après remise manuelle + coupon (si applicable) */
@@ -71,6 +76,10 @@ export type ReservationWizardDetails = {
   airbusBadge: string;
   extras: Record<string, boolean>;
   installments: 1 | 2;
+  /** Acompte (%) de la 1re échéance quand installments = 2. */
+  depositPercent: string;
+  /** Mode de règlement par échéance (index 0 = acompte, 1 = solde). */
+  installmentMethods: PaymentMethod[];
   settlementNote: string;
   /** Statuts opérationnels (admin) */
   paymentCapturedAt?: string | null;
@@ -133,6 +142,8 @@ export function emptyWizardDetails(): ReservationWizardDetails {
     airbusBadge: '',
     extras: {},
     installments: 1,
+    depositPercent: '50',
+    installmentMethods: ['ONLINE', 'ONLINE'],
     settlementNote: '',
     paymentCapturedAt: null,
     depositCapturedAt: null,

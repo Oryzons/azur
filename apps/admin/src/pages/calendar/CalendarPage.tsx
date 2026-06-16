@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, NotebookPen, Baby, FileText, LifeBuoy, GripVertical } from 'lucide-react';
+import { ChevronLeft, ChevronRight, GripVertical } from 'lucide-react';
 import {
   assignLanes,
   BOAT_COL_W,
@@ -12,10 +12,12 @@ import {
   monthTitle,
   overlaps,
   pad2,
+  planningRowMetrics,
+  PILL_LANE_GAP,
   PRIMARY,
   CALENDAR_BOAT_ROW_DRAG_MIME,
-  ROW_H,
   segmentLabel,
+  ownerSegmentLabel,
   startOfDay,
   dayToIso,
   addDays,
@@ -35,19 +37,21 @@ import { emptyWizardDetails } from '@/pages/calendar/reservationWizardTypes';
 import { usePresence } from '@/lib/presence';
 import { deserializeReservation, seedDemoReservationsIfEmpty, useReservationsStore } from '@/stores/reservations';
 import { useBoatsStore } from '@/stores/boats';
-import { useCouponsStore } from '@/stores/coupons';
 import { ReservationDetailsPanel } from '@/pages/reservations/ReservationDetailsPanel';
 import { CalendarFiltersPanel } from '@/components/calendar/CalendarFiltersPanel';
 import { usePageFiltersPanel, type PageFiltersConfig } from '@/contexts/PageFiltersContext';
 import {
   applyCalendarBoatVisibility,
   countCalendarActiveFilters,
-  DEFAULT_CALENDAR_FILTER_STATE,
+  createCalendarFilterState,
+  deserializeCalendarFilters,
   filterCalendarBoats,
   filterCalendarReservations,
+  serializeCalendarFilters,
   sortCalendarBoats,
   type CalendarFilterState,
 } from '@/lib/calendarFilters';
+import { usePersistedPageFilters } from '@/lib/pageFilterStorage';
 import {
   applySubsetReorder,
   loadCalendarBoatOrder,
@@ -62,7 +66,9 @@ import { ContentReveal } from '@/components/ui/ContentReveal';
 import { CalendarPageSkeleton, CalendarPlanningSkeleton } from '@/components/skeletons/PageSkeletons';
 import { useCoreStoresReady } from '@/lib/useStoreHydration';
 import { BoatCoverAvatar } from '@/components/media/BoatCoverAvatar';
-import { CALENDAR_STATUS_LEGEND } from '@/lib/reservationStatus';
+import { buildCalendarPillLegend } from '@/lib/calendarPillLegend';
+import { CALENDAR_STATUS_LEGEND, type ReservationStatus } from '@/lib/reservationStatus';
+import { useExtrasStore } from '@/stores/extras';
 import { useAuthStore } from '@/stores/auth';
 import { isOwnerUser } from '@/lib/userRoles';
 import { useOwnerFleetScope } from '@/lib/ownerFleetScope';
@@ -115,11 +121,12 @@ export function CalendarPage() {
     initialEndTime?: string;
   }>({ boatId: '', dateIso: '' });
   const [createInitialDetails, setCreateInitialDetails] = useState(() => emptyWizardDetails());
-  const [filters, setFilters] = useState<CalendarFilterState>(() => ({
-    ...DEFAULT_CALENDAR_FILTER_STATE,
-    hiddenBoatIds: new Set<string>(),
-    hiddenStatuses: new Set(DEFAULT_CALENDAR_FILTER_STATE.hiddenStatuses),
-  }));
+  const [filters, setFilters] = usePersistedPageFilters(
+    'calendar',
+    createCalendarFilterState(),
+    serializeCalendarFilters,
+    deserializeCalendarFilters,
+  );
   const [boatGlobalOrder, setBoatGlobalOrder] = useState<string[]>([]);
 
   const detailsPresence = usePresence(detailsOpen, 180);
@@ -133,17 +140,15 @@ export function CalendarPage() {
   const fleets = useBoatsStore((s) => s.fleets);
   const boatsHydrated = useBoatsStore((s) => s.hydrated);
   const members = useMembersStore((s) => s.members);
+  const extrasCatalog = useExtrasStore((s) => s.extras);
+  const pillLegend = useMemo(() => buildCalendarPillLegend(extrasCatalog), [extrasCatalog]);
 
   function patchFilter<K extends keyof CalendarFilterState>(key: K, value: CalendarFilterState[K]) {
     setFilters((prev) => ({ ...prev, [key]: value }));
   }
 
   function resetCalendarFilters() {
-    setFilters({
-      ...DEFAULT_CALENDAR_FILTER_STATE,
-      hiddenBoatIds: new Set(),
-      hiddenStatuses: new Set(['cancelled']),
-    });
+    setFilters(createCalendarFilterState());
   }
 
   const boats = useMemo<Boat[]>(() => {
@@ -264,10 +269,12 @@ export function CalendarPage() {
     return { start, end, days: [start], cols: 1, title, month: cursor.getMonth() };
   }, [cursor, view]);
 
-  const calendarReservations = useMemo(
-    () => filterCalendarReservations(reservations, filters.hiddenStatuses),
-    [reservations, filters.hiddenStatuses],
-  );
+  const calendarReservations = useMemo(() => {
+    const hiddenStatuses = isOwner
+      ? new Set<ReservationStatus>([...filters.hiddenStatuses, 'cancelled'])
+      : filters.hiddenStatuses;
+    return filterCalendarReservations(reservations, hiddenStatuses);
+  }, [reservations, filters.hiddenStatuses, isOwner]);
 
   const visibleBoats = useMemo(
     () => applyCalendarBoatVisibility(matchingBoats, filters, calendarReservations, period),
@@ -340,7 +347,7 @@ export function CalendarPage() {
     if (openId && reservations.some((r) => r.id === openId)) {
       openReservation(openId);
     }
-    if (editId && reservations.some((r) => r.id === editId)) {
+    if (editId && !isOwner && reservations.some((r) => r.id === editId)) {
       openEdit(editId);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -442,17 +449,6 @@ export function CalendarPage() {
         totalDueCents,
       };
       setReservations((prev) => [...prev, newRes]);
-
-      const couponCodeNormalized = payload.details.couponCode.trim().replaceAll(/\s+/g, '').toUpperCase();
-      if (couponCodeNormalized) {
-        const match = useCouponsStore.getState().coupons.find((c) => c.code === couponCodeNormalized);
-        if (match) {
-          const clientKey = payload.details.linkedMemberId?.trim() || payload.details.clientEmail.trim().toLowerCase();
-          if (clientKey) {
-            useCouponsStore.getState().recordCouponRedemption(match.id, clientKey, start);
-          }
-        }
-      }
     }
 
     setCreateOpen(false);
@@ -520,6 +516,7 @@ export function CalendarPage() {
         onMove={setReservations}
         onCreate={handleGridCreate}
         readOnly={isOwner}
+        ownerMinimal={isOwner}
         onOpenReservation={openReservation}
         onReorderBoatRows={isOwner ? undefined : reorderCalendarBoats}
         unavailabilities={unavailItems}
@@ -552,6 +549,7 @@ export function CalendarPage() {
         }}
         onReorderBoatRows={isOwner ? undefined : reorderCalendarBoats}
         readOnly={isOwner}
+        ownerMinimal={isOwner}
         highlightDay={highlightDay}
       />
     );
@@ -641,10 +639,16 @@ export function CalendarPage() {
         </div>
       </div>
 
-      <section className="overflow-hidden rounded-3xl border border-zinc-200/80 bg-white shadow-sm shadow-zinc-200/40">
+      <section
+        className="overflow-hidden rounded-3xl border border-zinc-200/80 bg-white shadow-sm shadow-zinc-200/40"
+        data-tour={isOwner ? 'owner-calendar-planning' : 'admin-calendar-planning'}
+      >
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-100 bg-gradient-to-r from-zinc-50/90 to-white px-4 py-3 sm:px-5">
           <p className="text-base font-semibold capitalize text-zinc-900">{period.title}</p>
-          <p className="text-xs text-zinc-400">
+          <p
+            className="text-xs text-zinc-400"
+            data-tour={isOwner ? 'owner-calendar-unavail-hint' : undefined}
+          >
             {isOwner
               ? 'Défilement horizontal · clic sur une date pour une indisponibilité'
               : 'Faites défiler horizontalement pour voir tout le mois'}
@@ -660,11 +664,16 @@ export function CalendarPage() {
         reservations={reservations}
         boatsCatalog={catalogBoats}
         fleetsCatalog={fleets}
+        ownerReadOnly={isOwner}
         onClose={closeReservation}
-        onEdit={(id) => {
-          closeReservation();
-          openEdit(id);
-        }}
+        onEdit={
+          isOwner
+            ? undefined
+            : (id) => {
+                closeReservation();
+                openEdit(id);
+              }
+        }
         onOpenReservation={openReservation}
       />
 
@@ -688,8 +697,8 @@ export function CalendarPage() {
         }}
         onSave={async (input, existingId) => {
           try {
-            if (existingId) await updateUnavail(existingId, input);
-            else await createUnavail(input);
+            const saved = existingId ? await updateUnavail(existingId, input) : await createUnavail(input);
+            setCursor(startOfDay(new Date(saved.startAt)));
           } catch (e) {
             throw new Error(extractApiErrorMessage(e, 'Enregistrement impossible.'));
           }
@@ -709,6 +718,7 @@ export function CalendarPage() {
           presence={createPresence}
           onClose={closeCreate}
           lockCatalogPricing={Boolean(editingReservationId)}
+          excludeReservationId={editingReservationId ?? undefined}
           boats={orderedFilteredBoats.map((b) => ({ id: b.id, name: b.name }))}
           initialBoatId={createInitial.boatId}
           initialDateIso={createInitial.dateIso}
@@ -730,34 +740,36 @@ export function CalendarPage() {
         <h2 className="text-sm font-semibold text-zinc-800">Légende</h2>
         <p className="mt-1 text-xs text-zinc-500">
           {isOwner
-            ? 'Gris = vos indisponibilités · couleurs = statut des réservations sur vos bateaux.'
-            : 'Couleur des blocs réservation selon le statut.'}
+            ? 'Gris = vos indisponibilités · bleu ardoise = créneaux réservés (horaires uniquement).'
+            : 'Couleur des blocs selon le statut (orange = payée partiellement, ex. hors ligne restant).'}
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
           <div className="flex items-center gap-2 rounded-xl border border-zinc-200/90 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-700 shadow-sm">
             <span className="h-3 w-3 shrink-0 rounded-sm bg-zinc-500" aria-hidden />
             Indisponibilité
           </div>
-          {CALENDAR_STATUS_LEGEND.map(({ label, color }) => (
-            <div
-              key={label}
-              className="flex items-center gap-2 rounded-xl border border-zinc-200/90 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-700 shadow-sm"
-            >
-              <span className="h-3 w-3 shrink-0 rounded-sm" style={{ background: color }} aria-hidden />
-              {label}
+          {isOwner ? (
+            <div className="flex items-center gap-2 rounded-xl border border-zinc-200/90 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-700 shadow-sm">
+              <span className="h-3 w-3 shrink-0 rounded-sm bg-slate-500" aria-hidden />
+              Location client
             </div>
-          ))}
+          ) : (
+            CALENDAR_STATUS_LEGEND.map(({ label, color }) => (
+              <div
+                key={label}
+                className="flex items-center gap-2 rounded-xl border border-zinc-200/90 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-700 shadow-sm"
+              >
+                <span className="h-3 w-3 shrink-0 rounded-sm" style={{ background: color }} aria-hidden />
+                {label}
+              </div>
+            ))
+          )}
         </div>
         {!isOwner ? (
           <div className="mt-4 flex flex-wrap items-center gap-3">
-            {[
-              { label: 'Extras', color: '#F59E0B', Icon: NotebookPen },
-              { label: 'Enfants', color: '#EC4899', Icon: Baby },
-              { label: 'Note interne', color: '#64748B', Icon: FileText },
-              { label: 'Avec skipper', color: '#10B981', Icon: LifeBuoy },
-            ].map(({ label, color, Icon }) => (
+            {pillLegend.map(({ key, label, color, Icon }) => (
               <div
-                key={label}
+                key={key}
                 className="flex items-center gap-2 rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 shadow-sm"
               >
                 <span
@@ -793,6 +805,7 @@ function SpanPlanning(props: Readonly<{
   onOpenUnavailability: (item: BoatUnavailability) => void;
   onReorderBoatRows?: (fromIndex: number, toIndex: number) => void;
   readOnly?: boolean;
+  ownerMinimal?: boolean;
   highlightDay?: Date;
 }>) {
   const {
@@ -810,9 +823,13 @@ function SpanPlanning(props: Readonly<{
     onOpenUnavailability,
     onReorderBoatRows,
     readOnly,
+    ownerMinimal = false,
     highlightDay,
   } = props;
   const ro = Boolean(readOnly);
+  const ownerView = ownerMinimal;
+  const boatColBg = ownerView ? 'bg-white' : 'bg-zinc-50';
+  const boatRowColBg = ownerView ? 'bg-white group-hover:bg-zinc-50' : 'bg-white group-hover:bg-zinc-50/80';
   const today = startOfDay(new Date());
   const isWeek = mode === 'week';
   const gridCols = isWeek
@@ -853,9 +870,17 @@ function SpanPlanning(props: Readonly<{
     <div className="overflow-hidden rounded-2xl bg-white">
       <div className={isWeek ? 'overflow-hidden' : 'overflow-x-auto overflow-y-hidden scroll-smooth'}>
         <div style={{ minWidth: isWeek ? '100%' : BOAT_COL_W + days.length * DAY_COL_W }}>
-          <div className="flex sticky top-0 z-30 border-b border-zinc-100 bg-zinc-50/95 backdrop-blur-sm">
+          <div
+            className={[
+              'flex sticky top-0 z-30 border-b border-zinc-100',
+              ownerView ? 'bg-white' : 'bg-zinc-50/95 backdrop-blur-sm',
+            ].join(' ')}
+          >
             <div
-              className="sticky left-0 z-20 shrink-0 border-r border-zinc-100 bg-zinc-50/95 shadow-[4px_0_12px_-4px_rgba(0,0,0,0.06)]"
+              className={[
+                'sticky left-0 z-20 shrink-0 border-r border-zinc-100 shadow-[4px_0_12px_-4px_rgba(0,0,0,0.06)]',
+                boatColBg,
+              ].join(' ')}
               style={{ width: BOAT_COL_W }}
             >
               <div className="flex h-[52px] items-center px-4 text-[11px] font-bold uppercase tracking-wider text-zinc-400">
@@ -917,8 +942,7 @@ function SpanPlanning(props: Readonly<{
                 })
                 .sort((a, b) => a.startIdx - b.startIdx || a.endIdx - b.endIdx);
 
-              const rowHeight = ROW_H;
-              const overlayPad = 0;
+              const overlayPad = 2;
 
               const unavailSegs = rowUnavail
                 .map((u) => {
@@ -963,15 +987,17 @@ function SpanPlanning(props: Readonly<{
               const laneInfo = assignLanes(
                 rowSegs,
                 (s) => s.startIdx,
-                (s) => s.endIdx,
+                (s) => s.endIdx + 1,
               );
-              const laneCount = Math.max(1, laneInfo.lanes);
-              const barH = Math.max(18, Math.floor(rowHeight / laneCount));
+              const { barH, rowHeight } = planningRowMetrics(laneInfo.lanes);
 
               return (
                 <div key={boat.id} className="group flex transition-colors hover:bg-zinc-50/50">
                   <div
-                    className="sticky left-0 z-20 shrink-0 border-r border-zinc-100 bg-white shadow-[4px_0_12px_-4px_rgba(0,0,0,0.05)] group-hover:bg-zinc-50/80"
+                    className={[
+                      'sticky left-0 z-20 shrink-0 border-r border-zinc-100 shadow-[4px_0_12px_-4px_rgba(0,0,0,0.05)]',
+                      boatRowColBg,
+                    ].join(' ')}
                     style={{ width: BOAT_COL_W, height: rowHeight }}
                     onDragOver={
                       onReorderBoatRows
@@ -1088,42 +1114,50 @@ function SpanPlanning(props: Readonly<{
                       </div>
                     </div>
 
-                    {/* Reservations */}
+                    {/* Réservations & indisponibilités (positionnement absolu par couloir) */}
                     <div
-                      className="pointer-events-none overflow-hidden absolute inset-0 z-10"
+                      className="pointer-events-none absolute inset-0 z-10 overflow-hidden"
                       style={{ paddingTop: overlayPad, paddingBottom: overlayPad }}
                     >
-                      <div
-                        className="grid h-full"
-                        style={{ gridTemplateColumns: gridCols }}
-                      >
+                      <div className="relative h-full w-full">
                         {rowSegs.map((seg, i) => {
                           const isMultiDay = seg.endIdx > seg.startIdx;
-                          const colStart = seg.startIdx + 1;
-                          const colEnd = isMultiDay ? seg.endIdx + 2 : colStart + 1;
+                          const daySpan = seg.endIdx - seg.startIdx + 1;
                           const lane = laneInfo.laneByIndex[i] ?? 0;
-                          const rounded = isMultiDay ? 'rounded-xl px-2' : 'rounded-lg px-2';
-                          const textSize = isMultiDay ? 'text-xs' : 'text-[11px]';
+                          const top = overlayPad + lane * (barH + PILL_LANE_GAP);
+                          const rounded = isMultiDay ? 'rounded-xl px-2' : 'rounded-lg px-1.5';
+                          const textSize = isMultiDay ? 'text-xs' : 'text-[10px]';
+                          const segStyle: React.CSSProperties = isWeek
+                            ? {
+                                left: `${(seg.startIdx / days.length) * 100}%`,
+                                width: `${(daySpan / days.length) * 100}%`,
+                                top,
+                                height: barH,
+                              }
+                            : {
+                                left: seg.startIdx * DAY_COL_W,
+                                width: daySpan * DAY_COL_W,
+                                top,
+                                height: barH,
+                              };
 
                           return (
                             <div
                               key={`${seg.kind}-${seg.id}`}
-                              style={{
-                                gridColumn: `${colStart} / ${colEnd}`,
-                                marginTop: lane * barH,
-                                height: barH,
-                              }}
-                              className="flex min-w-0 items-stretch self-start px-0"
+                              className="absolute box-border min-w-0 px-px"
+                              style={segStyle}
                             >
                               {seg.kind === 'reservation' ? (
                                 <ReservationPill
                                   reservation={seg.r}
-                                  label={segmentLabel(seg.r, mode)}
+                                  label={ownerMinimal ? ownerSegmentLabel(seg.r, mode) : segmentLabel(seg.r, mode)}
                                   height={barH}
                                   draggable={!ro && !isReservationLockedFromReservation(seg.r)}
+                                  minimal={ownerMinimal}
+                                  neutralStyle={ownerMinimal}
                                   onClick={openReservation.bind(null, seg.r.id)}
                                   className={[
-                                    'pointer-events-auto flex h-full w-full min-w-0 items-center text-left font-semibold text-white shadow-sm',
+                                    'pointer-events-auto flex h-full w-full min-w-0 text-left font-semibold text-white shadow-sm',
                                     rounded,
                                     textSize,
                                   ].join(' ')}

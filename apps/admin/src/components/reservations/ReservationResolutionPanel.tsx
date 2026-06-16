@@ -7,6 +7,8 @@ import { computeCatalogLocationEuros, mergeBoatFleetRates } from '@/lib/calendar
 import { resolvePricingSeasonCode } from '@/lib/pricingSeasons';
 import { computeReservationPricingBreakdown } from '@/pages/finances/pricingTotals';
 import { useCouponsStore } from '@/stores/coupons';
+import { isReservationCancelled } from '@/lib/reservationStatus';
+import { deserializeReservation, useReservationsStore } from '@/stores/reservations';
 import { useExtrasStore } from '@/stores/extras';
 import { api } from '@/lib/api';
 import { extractApiErrorMessage } from '@/lib/apiError';
@@ -70,8 +72,10 @@ export function ReservationResolutionPanel(props: Readonly<Props>) {
   const [note, setNote] = useState('');
   const [notifyClient, setNotifyClient] = useState(true);
   const [creditLowerDifference, setCreditLowerDifference] = useState(true);
+  const [cancelReservation, setCancelReservation] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const alreadyCancelled = isReservationCancelled(r.details);
 
   const pricingPeriods = useBoatPricingStore((s) => s.periods);
   const pricesByPeriodId = useBoatPricingStore((s) => s.pricesByPeriodId);
@@ -80,7 +84,11 @@ export function ReservationResolutionPanel(props: Readonly<Props>) {
   const refreshPricing = useBoatPricingStore((s) => s.refresh);
   const extrasCatalog = useExtrasStore((s) => s.extras);
   const couponsCatalog = useCouponsStore((s) => s.coupons);
-  const couponRedemptions = useCouponsStore((s) => s.redemptions);
+  const reservationItems = useReservationsStore((s) => s.items);
+  const allReservations = useMemo(
+    () => reservationItems.map((s) => deserializeReservation(s)),
+    [reservationItems],
+  );
 
   useEffect(() => {
     if (!pricingHydrated) void refreshPricing();
@@ -145,7 +153,7 @@ export function ReservationResolutionPanel(props: Readonly<Props>) {
       draft,
       extrasCatalog,
       couponsCatalog,
-      couponRedemptions,
+      allReservations,
     );
     if (!breakdown.ok) return null;
     const paid =
@@ -154,7 +162,7 @@ export function ReservationResolutionPanel(props: Readonly<Props>) {
         : breakdown.final;
     const delta = Math.round((breakdown.final - paid) * 100) / 100;
     return { breakdown, paid, delta };
-  }, [kind, catalogPreview, r, boatId, dateIso, startTime, endTime, extrasCatalog, couponsCatalog, couponRedemptions]);
+  }, [kind, catalogPreview, r, boatId, dateIso, startTime, endTime, extrasCatalog, couponsCatalog, allReservations]);
 
   async function submit() {
     setSubmitting(true);
@@ -191,6 +199,7 @@ export function ReservationResolutionPanel(props: Readonly<Props>) {
           type: 'refund',
           amount: parsed,
           notifyClient,
+          cancelReservation: alreadyCancelled ? false : cancelReservation,
           ...(note.trim() ? { note: note.trim() } : {}),
         };
       }
@@ -207,17 +216,19 @@ export function ReservationResolutionPanel(props: Readonly<Props>) {
           parts.push(`Avoir de ${(data.creditCents / 100).toFixed(2)} € enregistré.`);
         }
         onSuccess(parts.join(' '));
+      } else if (data.kind === 'refund') {
+        const cancelledNote =
+          !alreadyCancelled && cancelReservation ? ' Réservation annulée.' : '';
+        onSuccess(
+          (data.emailSent
+            ? 'Remboursement enregistré — email envoyé au client.'
+            : 'Remboursement enregistré.') + cancelledNote,
+        );
       } else if (data.kind === 'store_credit') {
         onSuccess(
           data.emailSent
             ? 'Avoir enregistré — réservation annulée, email envoyé au client.'
             : 'Avoir enregistré — réservation annulée.',
-        );
-      } else {
-        onSuccess(
-          data.emailSent
-            ? 'Remboursement enregistré — email de confirmation envoyé.'
-            : 'Remboursement enregistré.',
         );
       }
       onClose();
@@ -397,6 +408,17 @@ export function ReservationResolutionPanel(props: Readonly<Props>) {
             onChange={(e) => setNote(e.target.value)}
             className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-sm"
           />
+        </label>
+      ) : null}
+
+      {kind === 'refund' && !alreadyCancelled ? (
+        <label className="mt-3 flex items-center gap-2 text-xs text-zinc-600">
+          <input
+            type="checkbox"
+            checked={cancelReservation}
+            onChange={(e) => setCancelReservation(e.target.checked)}
+          />
+          Annuler la réservation (libérer le créneau)
         </label>
       ) : null}
 

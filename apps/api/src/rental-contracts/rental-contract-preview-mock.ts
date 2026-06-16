@@ -1,3 +1,9 @@
+import {
+  DEFAULT_BRAND_NAME,
+  DEFAULT_COMPANY_ADDRESS_LINE,
+  DEFAULT_COMPANY_CITY,
+  DEFAULT_COMPANY_POSTAL_CODE,
+} from '@bleu-calanque/shared';
 import type { RentalContractViewModel } from './rental-contract-html';
 import { DEFAULT_CONTRACT_REQUIRED_DOCUMENTS } from './rental-contract-default-terms';
 import {
@@ -31,7 +37,7 @@ export function buildMockPreviewViewModel(
   company: CompanyRow | null,
   template: TemplateRow,
 ): RentalContractViewModel {
-  const brand = company?.brandName ?? 'Bleu Calanque';
+  const brand = company?.brandName ?? DEFAULT_BRAND_NAME;
   const legal = company?.legalName ?? brand;
   const { departure: departurePlace, arrival: arrivalPlace } = resolveRentalLocations({ company });
   const startAt = '01/07/2026 09:00';
@@ -56,9 +62,9 @@ export function buildMockPreviewViewModel(
       legalName: legal,
       siret: company?.siret ?? '000 000 000 00000',
       contactPhone: company?.contactPhone ?? '04 00 00 00 00',
-      addressLine: company?.addressLine ?? 'Quai de la Lèque',
-      postalCode: company?.postalCode ?? '13016',
-      city: company?.city ?? 'Marseille',
+      addressLine: company?.addressLine ?? DEFAULT_COMPANY_ADDRESS_LINE,
+      postalCode: company?.postalCode ?? DEFAULT_COMPANY_POSTAL_CODE,
+      city: company?.city ?? DEFAULT_COMPANY_CITY,
       country: company?.country ?? 'FRANCE',
     },
     template: {
@@ -139,6 +145,9 @@ export function buildMockPreviewViewModel(
       ttc: '500,00 €',
     },
     payments: [{ date: '—', method: '—', amount: '—' }],
+    paymentObligations: [
+      { label: 'Paiement', methodLabel: 'Carte bancaire (en ligne)', amount: '500,00 €', paid: false },
+    ],
     balanceDue: '500,00 €',
     clientSignatureImg: null,
     operatorSignatureImg: company?.contractOperatorSignatureDataUrl ?? null,

@@ -1,4 +1,17 @@
+import { BadRequestException } from '@nestjs/common';
 import Stripe from 'stripe';
+
+export function isStripeChargeAlreadyRefunded(err: unknown): boolean {
+  if (err instanceof Stripe.errors.StripeError) {
+    const code = err.code ?? '';
+    const raw = err.message ?? '';
+    return code === 'charge_already_refunded' || /already been refunded/i.test(raw);
+  }
+  if (err instanceof BadRequestException) {
+    return /intégralement remboursé|déjà été remboursé/i.test(err.message);
+  }
+  return false;
+}
 
 /** Message utilisateur en français pour les erreurs Stripe courantes. */
 export function stripeErrorMessageFr(err: unknown, fallback = 'Erreur Stripe.') : string {
@@ -21,7 +34,7 @@ export function stripeErrorMessageFr(err: unknown, fallback = 'Erreur Stripe.') 
 
     switch (code) {
       case 'charge_already_refunded':
-        return 'Ce paiement a déjà été intégralement remboursé.';
+        return 'La part CB Stripe est déjà remboursée. S’il reste une part espèces/chèque, enregistrez uniquement ce solde (sans repasser par Stripe).';
       case 'amount_too_large':
         return 'Le montant du remboursement est trop élevé par rapport au paiement encaissé.';
       case 'resource_missing':

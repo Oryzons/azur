@@ -37,6 +37,10 @@ interface AnnouncementsState {
   hydrated: boolean;
   refresh: () => Promise<void>;
   addAnnouncement: (a: AddPayload) => Promise<{ ok: true; id: string } | { ok: false; error: string }>;
+  updateAnnouncement: (
+    id: string,
+    a: AddPayload,
+  ) => Promise<{ ok: true; id: string } | { ok: false; error: string }>;
   removeAnnouncement: (id: string) => void;
 }
 
@@ -168,6 +172,26 @@ function announcementFromApi(x: any): Announcement {
   };
 }
 
+function validateAnnouncementPayload(a: AddPayload): { ok: true; title: string; navalBase: string } | { ok: false; error: string } {
+  const title = a.title.trim();
+  if (!title) return { ok: false, error: 'Le titre est requis.' };
+  const navalBase = a.navalBase.trim() || DEFAULT_NAVAL_BASE;
+
+  const link = a.link;
+  if (link.kind === 'existing_fleet' && !link.fleetId.trim()) return { ok: false, error: 'Choisis une flotille.' };
+  if (link.kind === 'existing_boat' && !link.boatId.trim()) return { ok: false, error: 'Choisis un bateau.' };
+  if (link.kind === 'new_fleet' && !link.fleetName.trim()) return { ok: false, error: 'Indique le nom de la nouvelle flotille.' };
+  if (link.kind === 'new_boat') {
+    if (!link.brand.trim() || !link.name.trim() || !link.model.trim()) {
+      return { ok: false, error: 'Marque, nom et modèle du bateau sont requis.' };
+    }
+    const max = Number(link.maxPassengers);
+    if (!Number.isFinite(max) || max < 1 || max > 200) return { ok: false, error: 'Passagers : nombre entre 1 et 200.' };
+  }
+
+  return { ok: true, title, navalBase };
+}
+
 export const useAnnouncementsStore = create<AnnouncementsState>()((set, get) => ({
   announcements: [],
   hydrated: false,
@@ -179,21 +203,9 @@ export const useAnnouncementsStore = create<AnnouncementsState>()((set, get) => 
   },
 
   addAnnouncement: async (a) => {
-    const title = a.title.trim();
-    if (!title) return { ok: false, error: 'Le titre est requis.' };
-    const navalBase = a.navalBase.trim() || DEFAULT_NAVAL_BASE;
-
-    const link = a.link;
-    if (link.kind === 'existing_fleet' && !link.fleetId.trim()) return { ok: false, error: 'Choisis une flotille.' };
-    if (link.kind === 'existing_boat' && !link.boatId.trim()) return { ok: false, error: 'Choisis un bateau.' };
-    if (link.kind === 'new_fleet' && !link.fleetName.trim()) return { ok: false, error: 'Indique le nom de la nouvelle flotille.' };
-    if (link.kind === 'new_boat') {
-      if (!link.brand.trim() || !link.name.trim() || !link.model.trim()) {
-        return { ok: false, error: 'Marque, nom et modèle du bateau sont requis.' };
-      }
-      const max = Number(link.maxPassengers);
-      if (!Number.isFinite(max) || max < 1 || max > 200) return { ok: false, error: 'Passagers : nombre entre 1 et 200.' };
-    }
+    const validated = validateAnnouncementPayload(a);
+    if (!validated.ok) return validated;
+    const { title, navalBase } = validated;
 
     const tmpId = tmpIdNow();
     const optimistic: Announcement = { ...a, id: tmpId, title, navalBase, createdAt: new Date().toISOString() };
@@ -207,6 +219,36 @@ export const useAnnouncementsStore = create<AnnouncementsState>()((set, get) => 
     } catch (e) {
       set((s) => ({ announcements: s.announcements.filter((x) => x.id !== tmpId) }));
       return { ok: false, error: extractApiError(e, 'Impossible de créer l’annonce.') };
+    }
+  },
+
+  updateAnnouncement: async (id, a) => {
+    const validated = validateAnnouncementPayload(a);
+    if (!validated.ok) return validated;
+    const { title, navalBase } = validated;
+
+    const prev = get().announcements.find((x) => x.id === id);
+    const optimistic: Announcement = {
+      ...(prev ?? { ...a, id, createdAt: new Date().toISOString() }),
+      ...a,
+      id,
+      title,
+      navalBase,
+    };
+    set((s) => ({ announcements: s.announcements.map((x) => (x.id === id ? optimistic : x)) }));
+
+    try {
+      const { data } = await api.put(`/announcements/${id}`, announcementToApi({ ...a, title, navalBase }));
+      const real = announcementFromApi(data);
+      set((s) => ({ announcements: s.announcements.map((x) => (x.id === id ? real : x)) }));
+      return { ok: true, id: real.id };
+    } catch (e) {
+      if (prev) {
+        set((s) => ({ announcements: s.announcements.map((x) => (x.id === id ? prev : x)) }));
+      } else {
+        void get().refresh();
+      }
+      return { ok: false, error: extractApiError(e, 'Impossible de modifier l’annonce.') };
     }
   },
 

@@ -1,5 +1,8 @@
 import { z } from 'zod';
-import { coverPhotoIndexSchema, presentationPhotosSchema } from './media';
+import { coverPhotoIndexSchema, MAX_INCOMING_MEDIA_DATA_URL_LENGTH, presentationPhotosSchema } from './media';
+
+/** JSON détails bateau (peut contenir des data URLs légalité avant traitement serveur). */
+export const BOAT_DETAILS_JSON_MAX_LENGTH = MAX_INCOMING_MEDIA_DATA_URL_LENGTH * 5;
 import { moneyCentsSchema, optionalUuidSchema, parseOrThrow, positiveIntSchema, trimmedString, uuidSchema } from './primitives';
 
 export const BOAT_TYPE_VALUES = [
@@ -35,7 +38,7 @@ export const createBoatSchema = z.object({
   fleetId: optionalUuidSchema,
   presentationPhotos: presentationPhotosSchema,
   coverPhotoIndex: coverPhotoIndexSchema,
-  detailsJson: z.union([z.string().max(200_000), z.null()]).optional(),
+  detailsJson: z.union([z.string().max(BOAT_DETAILS_JSON_MAX_LENGTH), z.null()]).optional(),
   depositAmountCents: moneyCentsSchema.optional(),
 });
 

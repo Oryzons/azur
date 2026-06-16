@@ -1,4 +1,4 @@
-# Bleu Calanque — MVP (auth + dashboard)
+# Azur — MVP (auth + dashboard)
 
 ## Structure
 

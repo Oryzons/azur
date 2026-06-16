@@ -15,11 +15,11 @@ import {
   PARTNER_KINDS,
   PARTNER_OFFERING_ORDER,
   PARTNER_OFFERINGS,
-  fileToDataUrl,
   partnerInitials,
   partnerKindLabel,
   partnerOfferingsSummary,
 } from '@/lib/partnerUi';
+import { documentUploadErrorMessage, fileToUploadDataUrl } from '@/lib/documentUpload';
 import { useSettingsStore, type Partner, type PartnerLinkedOffering } from '@/stores/settings';
 
 type EditorSection = 'identity' | 'offerings' | 'contact';
@@ -368,7 +368,10 @@ export function PartnersSettingsTab() {
                         onChange={(e) => {
                           const f = e.target.files?.[0];
                           if (!f) return;
-                          void fileToDataUrl(f).then((url) => updatePartner({ ...selected, logoUrl: url }));
+                          void fileToUploadDataUrl(f)
+                            .then((url) => updatePartner({ ...selected, logoUrl: url }))
+                            .catch((err) => window.alert(documentUploadErrorMessage(err)));
+                          e.target.value = '';
                         }}
                       />
                       {selected.logoUrl ? (

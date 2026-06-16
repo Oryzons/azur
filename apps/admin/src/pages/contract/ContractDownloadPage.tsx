@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { FileDown, Loader2 } from 'lucide-react';
 import { api } from '@/lib/api';
+import { DEFAULT_BRAND_NAME } from '@/lib/brand';
 
 export function ContractDownloadPage() {
   const [params] = useSearchParams();
@@ -63,7 +64,7 @@ export function ContractDownloadPage() {
             <p className="text-xs text-zinc-500">Si le fichier ne s&apos;ouvre pas, vérifiez vos téléchargements.</p>
           </div>
         )}
-        <p className="mt-6 text-center text-xs text-zinc-400">Bleu Calanque</p>
+        <p className="mt-6 text-center text-xs text-zinc-400">{DEFAULT_BRAND_NAME}</p>
       </div>
     </div>
   );

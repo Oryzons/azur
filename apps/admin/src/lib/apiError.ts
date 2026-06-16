@@ -6,7 +6,10 @@ const STRIPE_MESSAGE_FR: [RegExp, string | ((m: RegExpMatchArray) => string)][] 
     (m) => `Le montant du remboursement (${m[1]}) dépasse le montant payé (${m[2]}).`,
   ],
   [/greater than charge amount/i, 'Le montant du remboursement dépasse le montant payé.'],
-  [/charge already refunded/i, 'Ce paiement a déjà été intégralement remboursé.'],
+  [
+    /charge already refunded/i,
+    'La part CB Stripe est déjà remboursée. S’il reste une part espèces/chèque, enregistrez uniquement ce solde (sans repasser par Stripe).',
+  ],
   [/already been refunded/i, 'Ce paiement a déjà été remboursé.'],
 ];
 

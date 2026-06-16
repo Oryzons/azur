@@ -1,6 +1,6 @@
 import { IsBoolean, IsEmail, IsIn, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
-export const MEMBER_ROLE_VALUES = ['ADMIN', 'AGENT', 'OWNER', 'CLIENT'] as const;
+export const MEMBER_ROLE_VALUES = ['ADMIN', 'AGENT', 'OWNER', 'CLIENT', 'DAF'] as const;
 
 export const CLIENT_TYPE_VALUES = ['PARTICULIER', 'PROFESSIONNEL', 'ASSOCIATION'] as const;
 export const CIVILITY_VALUES = ['NONE', 'M', 'MME', 'MX'] as const;
@@ -78,6 +78,9 @@ export class CreateMemberDto {
   permManageBoats?: boolean;
   @IsOptional() @IsBoolean()
   permManageReservations?: boolean;
+
+  @IsOptional() @IsBoolean()
+  permComptabilite?: boolean;
 }
 
 export class UpdateMemberDto extends CreateMemberDto {}

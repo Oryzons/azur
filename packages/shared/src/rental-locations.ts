@@ -2,6 +2,12 @@
 export const DEFAULT_RENTAL_DEPARTURE_LOCATION = 'Port Ouest Marseille — L\'Estaque';
 export const DEFAULT_RENTAL_ARRIVAL_LOCATION = 'Port Ouest Marseille — L\'Estaque';
 
+/** Adresse société / contact (Port Ouest Marseille). */
+export const DEFAULT_COMPANY_ADDRESS_LINE = 'Port Ouest Marseille, D568';
+export const DEFAULT_COMPANY_POSTAL_CODE = '13016';
+export const DEFAULT_COMPANY_CITY = 'Marseille';
+export const DEFAULT_COMPANY_COUNTRY = 'France';
+
 export type RentalLocationSources = {
   company?: { departureLocation?: string | null; arrivalLocation?: string | null } | null;
   booking?: {

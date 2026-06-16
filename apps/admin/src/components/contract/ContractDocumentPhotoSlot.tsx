@@ -2,7 +2,8 @@ import {
   CONTRACT_DOCUMENT_ACCEPT,
   DocumentFilePreview,
 } from '@/components/contract/DocumentFilePreview';
-import { fileToDataUrl } from '@/lib/memberUi';
+import { documentUploadErrorMessage, fileToUploadDataUrl } from '@/lib/documentUpload';
+import { useState } from 'react';
 
 type Props = Readonly<{
   label: string;
@@ -14,6 +15,7 @@ type Props = Readonly<{
 export function ContractDocumentPhotoSlot(props: Props) {
   const { label, value, onChange, required } = props;
   const done = Boolean(value?.trim());
+  const [uploadError, setUploadError] = useState('');
 
   return (
     <label className="block">
@@ -29,12 +31,17 @@ export function ContractDocumentPhotoSlot(props: Props) {
         onChange={(e) => {
           const f = e.target.files?.[0];
           if (!f) return;
-          void fileToDataUrl(f).then(onChange);
+          setUploadError('');
+          void fileToUploadDataUrl(f)
+            .then(onChange)
+            .catch((err) => setUploadError(documentUploadErrorMessage(err)));
+          e.target.value = '';
         }}
       />
+      {uploadError ? <p className="mt-1 text-xs font-medium text-red-600">{uploadError}</p> : null}
       {done ? <DocumentFilePreview url={value} label={label} /> : null}
       {!done ? (
-        <p className="mt-1 text-[11px] text-zinc-500">Photo (JPEG, PNG, WebP) ou PDF — fichier lisible</p>
+        <p className="mt-1 text-[11px] text-zinc-500">Photo (JPEG, PNG, WebP) ou PDF — max. 20 Mo</p>
       ) : null}
     </label>
   );

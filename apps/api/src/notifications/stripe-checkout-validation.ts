@@ -1,6 +1,6 @@
 import { BadRequestException, Logger } from '@nestjs/common';
 import { PaymentChannel, type Prisma, type PrismaClient } from '@prisma/client';
-import { computeReservationTotalDueCents } from '../pricing/reservation-pricing';
+import { computeReservationTotalDueCents, reservationPricingInputFromRow } from '../pricing/reservation-pricing';
 import { mapReservationExtrasForPricing } from '../pricing/reservation-pricing-map';
 
 const logger = new Logger('StripeCheckoutValidation');
@@ -19,16 +19,10 @@ export async function computeExpectedTotalDueCents(
   reservation: ReservationForPricing,
 ): Promise<number> {
   const onlineExtras = reservation.extras.filter((l) => l.extra.paymentChannel === PaymentChannel.ONLINE);
-  return computeReservationTotalDueCents(prisma, {
-    rentalPriceCents: reservation.rentalPriceCents,
-    discountPercent: reservation.discountPercent,
-    couponCode: reservation.couponCode,
-    clientMemberId: reservation.clientMemberId,
-    clientEmail: reservation.clientEmail,
-    startAt: reservation.startAt,
-    endAt: reservation.endAt,
-    extras: mapReservationExtrasForPricing(onlineExtras),
-  });
+  return computeReservationTotalDueCents(
+    prisma,
+    reservationPricingInputFromRow(reservation, mapReservationExtrasForPricing(onlineExtras)),
+  );
 }
 
 export type ValidatedStripeCheckout = {

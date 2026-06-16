@@ -112,6 +112,73 @@ export function buildNotificationCopy(
   }
 }
 
+export type OwnerReservationNotifyPrefs = {
+  ownerNotifyReservationsEnabled: boolean;
+  ownerNotifyNewReservation: boolean;
+  ownerNotifyReservationUpdated: boolean;
+  ownerNotifyReservationCancelled: boolean;
+  ownerNotifyReservationRestored: boolean;
+  ownerNotifyReservationPaid: boolean;
+};
+
+export function ownerPrefsAllowReservationEvent(
+  prefs: OwnerReservationNotifyPrefs,
+  event: ReservationNotificationEvent,
+): boolean {
+  if (!prefs.ownerNotifyReservationsEnabled) return false;
+  switch (event) {
+    case 'RESERVATION_CREATED':
+      return prefs.ownerNotifyNewReservation;
+    case 'RESERVATION_UPDATED':
+      return prefs.ownerNotifyReservationUpdated;
+    case 'RESERVATION_CANCELLED':
+      return prefs.ownerNotifyReservationCancelled;
+    case 'RESERVATION_RESTORED':
+      return prefs.ownerNotifyReservationRestored;
+    case 'RESERVATION_PAID':
+      return prefs.ownerNotifyReservationPaid;
+    case 'RESERVATION_REFUNDED':
+    case 'RESERVATION_PARTIAL_REFUND':
+      return prefs.ownerNotifyReservationUpdated;
+    case 'RESERVATION_DELETED':
+      return prefs.ownerNotifyReservationCancelled;
+    default:
+      return false;
+  }
+}
+
+export function buildOwnerReservationNotificationCopy(
+  event: ReservationNotificationEvent,
+  reservation: ReservationRowWithBoat,
+): { title: string; message: string; kind: InternalNotificationKind } {
+  const base = buildNotificationCopy(
+    event === 'RESERVATION_CREATED' ? 'RESERVATION_CREATED' : eventToInternalKind(event),
+    reservation,
+  );
+  if (event === 'RESERVATION_CREATED') {
+    return {
+      kind: 'RESERVATION_ON_OWNER_BOAT',
+      title: 'Nouvelle réservation sur votre bateau',
+      message: base.message,
+    };
+  }
+  const kind = eventToInternalKind(event);
+  const titleByEvent: Partial<Record<ReservationNotificationEvent, string>> = {
+    RESERVATION_UPDATED: 'Réservation modifiée sur votre bateau',
+    RESERVATION_CANCELLED: 'Réservation annulée sur votre bateau',
+    RESERVATION_RESTORED: 'Réservation rétablie sur votre bateau',
+    RESERVATION_PAID: 'Paiement sur votre bateau',
+    RESERVATION_REFUNDED: 'Remboursement sur votre bateau',
+    RESERVATION_PARTIAL_REFUND: 'Remboursement partiel sur votre bateau',
+    RESERVATION_DELETED: 'Réservation supprimée sur votre bateau',
+  };
+  return {
+    kind,
+    title: titleByEvent[event] ?? base.title,
+    message: base.message,
+  };
+}
+
 export function settingsAllowsKind(
   settings: {
     onReservationCreated?: boolean;

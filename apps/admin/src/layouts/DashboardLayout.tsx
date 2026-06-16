@@ -13,6 +13,8 @@ import { NotificationToastStack } from '@/components/layout/NotificationToastSta
 import { useNotificationsStore } from '@/stores/notifications';
 import { useAppStoresReady, useCoreStoresReady } from '@/lib/useStoreHydration';
 import { useAuthStore } from '@/stores/auth';
+import { OwnerPortalOnboarding } from '@/components/owner/OwnerPortalOnboarding';
+import { AdminOnboarding } from '@/components/admin/AdminOnboarding';
 import { isOwnerUser } from '@/lib/userRoles';
 
 export function DashboardLayout() {
@@ -54,6 +56,7 @@ function DashboardLayoutInner() {
         </div>
       ) : null}
       <StoresHydrator />
+      {isOwner ? <OwnerPortalOnboarding ready={appReady} /> : <AdminOnboarding ready={appReady} />}
       <InternalNotificationsPoller />
       <Sidebar />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -61,6 +64,7 @@ function DashboardLayoutInner() {
           <div className="relative flex items-center gap-3">
             <button
               type="button"
+              data-tour={isOwner ? undefined : 'admin-header-notifications'}
               onClick={() => {
                 setFiltersOpen(false);
                 setNotificationsOpen(true);
@@ -81,6 +85,7 @@ function DashboardLayoutInner() {
             ) : (
               <button
                 type="button"
+                data-tour={isOwner ? undefined : 'admin-header-filters'}
                 onClick={() => {
                   setNotificationsOpen(false);
                   setFiltersOpen(true);

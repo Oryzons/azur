@@ -43,14 +43,55 @@ export type BoatDetails = {
     batteryCount: string;
     windlassType: WindlassType;
   };
-  assurance: {
-    assureurActuel: string;
-    numeroContrat: string;
-    montantFranchise: string;
-    valeurAssuree: string;
-    locationCouverte: boolean;
-  };
+  /** Documents réglementaires du bateau (assurance, gestion, circulation, annexe 240). */
+  legalite: BoatLegalite;
 };
+
+export type BoatLegalDocument = {
+  /** Référence / n° du document. */
+  numero: string;
+  /** Organisme émetteur (assureur, gestionnaire, préfecture…). */
+  organisme: string;
+  /** Date de fin de validité (à renouveler avant), format YYYY-MM-DD. */
+  dateFin: string;
+  /** Pièce jointe (data URL ou URL HTTPS après enregistrement). */
+  fileUrl: string;
+};
+
+export type BoatLegaliteAssurance = BoatLegalDocument & {
+  montantFranchise: string;
+  valeurAssuree: string;
+  locationCouverte: boolean;
+};
+
+export type BoatLegalite = {
+  assurance: BoatLegaliteAssurance;
+  contratGestion: BoatLegalDocument;
+  carteCirculation: BoatLegalDocument;
+  annexe240: BoatLegalDocument;
+};
+
+function emptyLegalDocument(): BoatLegalDocument {
+  return { numero: '', organisme: '', dateFin: '', fileUrl: '' };
+}
+
+function defaultLegaliteAssurance(): BoatLegaliteAssurance {
+  return {
+    ...emptyLegalDocument(),
+    montantFranchise: '',
+    valeurAssuree: '',
+    locationCouverte: false,
+  };
+}
+
+export function defaultBoatLegalite(): BoatLegalite {
+  return {
+    assurance: defaultLegaliteAssurance(),
+    contratGestion: emptyLegalDocument(),
+    carteCirculation: emptyLegalDocument(),
+    annexe240: emptyLegalDocument(),
+  };
+}
 
 export function defaultBoatDetails(): BoatDetails {
   return {
@@ -73,20 +114,86 @@ export function defaultBoatDetails(): BoatDetails {
       capacityL: '',
     },
     equipements: { selected: {}, waterCapacityL: '', batteryCount: '', windlassType: '' },
-    assurance: {
-      assureurActuel: '',
-      numeroContrat: '',
-      montantFranchise: '',
-      valeurAssuree: '',
-      locationCouverte: false,
-    },
+    legalite: defaultBoatLegalite(),
+  };
+}
+
+type LegacyAssurance = {
+  assureurActuel?: string;
+  numeroContrat?: string;
+  montantFranchise?: string;
+  valeurAssuree?: string;
+  locationCouverte?: boolean;
+  dateFin?: string;
+  numero?: string;
+  organisme?: string;
+};
+
+function mergeLegalDocument(
+  base: BoatLegalDocument,
+  patch?: Partial<BoatLegalDocument> | null,
+): BoatLegalDocument {
+  if (!patch) return { ...base };
+  return {
+    numero: (patch.numero ?? base.numero).trim(),
+    organisme: (patch.organisme ?? base.organisme).trim(),
+    dateFin: (patch.dateFin ?? base.dateFin).trim(),
+    fileUrl: (patch.fileUrl ?? base.fileUrl).trim(),
+  };
+}
+
+function mergeLegaliteAssurance(
+  base: BoatLegaliteAssurance,
+  patch?: Partial<BoatLegaliteAssurance> | null,
+): BoatLegaliteAssurance {
+  if (!patch) return { ...base };
+  return {
+    numero: (patch.numero ?? base.numero).trim(),
+    organisme: (patch.organisme ?? base.organisme).trim(),
+    dateFin: (patch.dateFin ?? base.dateFin).trim(),
+    montantFranchise: (patch.montantFranchise ?? base.montantFranchise).trim(),
+    valeurAssuree: (patch.valeurAssuree ?? base.valeurAssuree).trim(),
+    locationCouverte: patch.locationCouverte ?? base.locationCouverte,
+    fileUrl: (patch.fileUrl ?? base.fileUrl).trim(),
+  };
+}
+
+function migrateLegacyAssurance(legacy?: LegacyAssurance | null): BoatLegaliteAssurance {
+  const base = defaultLegaliteAssurance();
+  if (!legacy) return base;
+  return {
+    numero: legacy.numeroContrat?.trim() ?? legacy.numero?.trim() ?? '',
+    organisme: legacy.assureurActuel?.trim() ?? legacy.organisme?.trim() ?? '',
+    dateFin: legacy.dateFin?.trim() ?? '',
+    montantFranchise: legacy.montantFranchise?.trim() ?? '',
+    valeurAssuree: legacy.valeurAssuree?.trim() ?? '',
+    locationCouverte: Boolean(legacy.locationCouverte),
+    fileUrl: '',
   };
 }
 
 function mergeBoatDetails(raw: unknown): BoatDetails {
   const base = defaultBoatDetails();
   if (!raw || typeof raw !== 'object') return base;
-  const r = raw as Partial<BoatDetails>;
+  const r = raw as Partial<BoatDetails> & { assurance?: LegacyAssurance };
+  const legaliteRaw = r.legalite;
+  const legacyAssurance = r.assurance;
+  const legaliteBase = defaultBoatLegalite();
+  const legalite: BoatLegalite = legaliteRaw
+    ? {
+        assurance: mergeLegaliteAssurance(legaliteBase.assurance, legaliteRaw.assurance),
+        contratGestion: mergeLegalDocument(legaliteBase.contratGestion, legaliteRaw.contratGestion),
+        carteCirculation: mergeLegalDocument(legaliteBase.carteCirculation, legaliteRaw.carteCirculation),
+        annexe240: mergeLegalDocument(legaliteBase.annexe240, legaliteRaw.annexe240),
+      }
+    : {
+        ...legaliteBase,
+        assurance: migrateLegacyAssurance(legacyAssurance),
+        contratGestion: legaliteBase.contratGestion,
+        carteCirculation: legaliteBase.carteCirculation,
+        annexe240: legaliteBase.annexe240,
+      };
+
   return {
     generales: { ...base.generales, ...(r.generales ?? {}) },
     dimensions: { ...base.dimensions, ...(r.dimensions ?? {}) },
@@ -96,10 +203,11 @@ function mergeBoatDetails(raw: unknown): BoatDetails {
       ...(r.equipements ?? {}),
       selected: {
         ...base.equipements.selected,
-        ...((r.equipements && typeof r.equipements === 'object' && (r.equipements as any).selected) || {}),
+        ...((r.equipements && typeof r.equipements === 'object' && (r.equipements as { selected?: Record<string, boolean> }).selected) ||
+          {}),
       },
     },
-    assurance: { ...base.assurance, ...(r.assurance ?? {}) },
+    legalite,
   };
 }
 

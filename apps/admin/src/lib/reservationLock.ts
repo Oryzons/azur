@@ -27,6 +27,7 @@ export function reservationLockContext(
     endAt: reservation.end,
     paymentCapturedAt: details?.paymentCapturedAt ?? null,
     adminStatus: details?.status ?? (details ? resolveReservationStatus(details) : null),
+    cancelledAt: details?.cancelledAt ?? null,
     checkInDone: Boolean(reservation.checkInDone),
     checkOutDone: Boolean(reservation.checkOutDone),
   };

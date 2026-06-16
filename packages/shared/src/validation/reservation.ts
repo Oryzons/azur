@@ -12,6 +12,7 @@ import {
   optionalUuidSchema,
   parseOrThrow,
   paymentChannelSchema,
+  paymentMethodSchema,
   positiveIntSchema,
   trimmedString,
   uuidSchema,
@@ -90,6 +91,10 @@ export const upsertReservationSchema = z
     ),
     airbusBadge: optionalAirbusBadgeSchema,
     installments: z.union([z.literal(1), z.literal(2), z.null()]).optional(),
+    /** Acompte (%) de la 1re échéance quand installments = 2. */
+    depositPercent: z.union([z.number().int().min(1).max(99), z.null()]).optional(),
+    /** Mode de règlement par échéance (index 0 = acompte, 1 = solde). */
+    installmentMethods: z.array(paymentMethodSchema).max(2).optional(),
     settlementNote: optionalTrimmedString(2000),
     paymentCapturedAt: optionalIsoDateTimeSchema,
     depositCapturedAt: optionalIsoDateTimeSchema,

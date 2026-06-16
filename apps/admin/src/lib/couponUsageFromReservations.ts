@@ -1,16 +1,34 @@
 import type { Reservation } from '@/pages/calendar/reservationTypes';
-import { isReservationCancelled } from '@/lib/reservationStatus';
-import type { Coupon } from '@/stores/coupons';
+import {
+  resolveReservationStatus,
+  statusDisplayLabel,
+  type ReservationStatus,
+} from '@/lib/reservationStatus';
+import { getEffectiveCouponDiscount, type Coupon } from '@/stores/coupons';
+import { countsTowardCouponTier, seasonYearForAprilSeptember } from '@bleu-calanque/shared';
 import type { Extra } from '@/stores/extras';
+import { reservationToCouponCountable, reservationsToCouponCountables } from '@/lib/couponReservation';
+
+export type CouponUsageEntry = {
+  reservationId: string;
+  startAt: string;
+  status: ReservationStatus;
+  statusLabel: string;
+  tier: 'full' | 'degraded';
+  percent: number | null;
+};
 
 export type CouponUsageGroup = {
   key: string;
   clientKey: string;
   count: number;
-  lastStartAt: string;
+  fullCount: number;
   degradedCount: number;
-  /** Dernière remise réellement appliquée (d’après montants). */
+  lastStartAt: string;
   lastEffectivePercent: number | null;
+  seasonYear: number | null;
+  usages: CouponUsageEntry[];
+  outOfSeasonCount: number;
 };
 
 function clientKeyFromReservation(r: Reservation): string {
@@ -18,67 +36,26 @@ function clientKeyFromReservation(r: Reservation): string {
   return d?.linkedMemberId?.trim() || d?.clientEmail?.trim().toLowerCase() || '';
 }
 
-function parseEuros(s: string | undefined): number {
-  const n = Number.parseFloat(String(s ?? '').replace(',', '.'));
-  return Number.isFinite(n) ? n : 0;
+function activeSeasonYear(reference = new Date()): number | null {
+  return seasonYearForAprilSeptember(reference);
 }
 
-function rentalDaysForReservation(r: Reservation): number {
-  const start = r.start.getTime();
-  let end = r.end.getTime();
-  if (end <= start) end = start + 60 * 60 * 1000;
-  return Math.max(1, Math.ceil((end - start) / 86400000));
-}
-
-function unitMultiplier(billingUnit: Extra['billingUnit'], rentalDays: number): number {
-  if (billingUnit === 'jour') return rentalDays;
-  if (billingUnit === 'semaine') return Math.max(1, Math.ceil(rentalDays / 7));
-  return 1;
-}
-
-function extrasEurosFromDetails(
-  details: NonNullable<Reservation['details']>,
-  extrasCatalog: readonly Extra[],
-  rentalDays: number,
-): number {
-  let total = 0;
-  const rental = parseEuros(details.rentalPrice);
-  for (const ex of extrasCatalog) {
-    if (!details.extras[ex.id]) continue;
-    const mult = unitMultiplier(ex.billingUnit, rentalDays);
-    if (ex.priceKind === 'euro') total += ex.priceValue * mult;
-    else total += rental * (ex.priceValue / 100) * mult;
-  }
-  return total;
-}
-
-function brutEuros(r: Reservation, extrasCatalog: readonly Extra[]): number {
-  const d = r.details;
-  if (!d) return 0;
-  const rental = parseEuros(d.rentalPrice);
-  const manual = Number.parseFloat(d.discountPercent.replace(',', '.')) || 0;
-  const sub = rental + extrasEurosFromDetails(d, extrasCatalog, rentalDaysForReservation(r));
-  return Math.round(sub * (1 - Math.min(100, Math.max(0, manual)) / 100) * 100) / 100;
-}
-
-export function effectiveDiscountPercent(r: Reservation, extrasCatalog: readonly Extra[]): number | null {
-  const brut = brutEuros(r, extrasCatalog);
-  const ttc = r.totalDueCents != null && r.totalDueCents > 0 ? r.totalDueCents / 100 : brut;
-  if (brut <= 0 || ttc <= 0) return null;
-  return Math.round((1 - ttc / brut) * 1000) / 10;
-}
-
-export function isDegradedApplied(
-  effectivePct: number | null,
-  coupon: Pick<Coupon, 'discountKind' | 'discountValue' | 'seasonRule'>,
-): boolean {
-  if (effectivePct == null || !coupon.seasonRule) return false;
-  if (coupon.discountKind !== 'percent') return false;
-  const degraded = coupon.seasonRule.degradedDiscountValue;
-  const full = coupon.discountValue;
-  const distD = Math.abs(effectivePct - degraded);
-  const distF = Math.abs(effectivePct - full);
-  return distD < 1.5 && distD <= distF;
+function effectiveCouponForReservation(
+  r: Reservation,
+  coupon: Pick<Coupon, 'discountKind' | 'discountValue' | 'seasonRule' | 'code'>,
+  allReservations: readonly Reservation[],
+): { percent: number | null; tier: 'full' | 'degraded' } {
+  const clientKey = clientKeyFromReservation(r);
+  if (!clientKey) return { percent: null, tier: 'full' };
+  const eff = getEffectiveCouponDiscount(
+    coupon as Coupon,
+    clientKey,
+    reservationsToCouponCountables(allReservations),
+    r.start,
+    { reservationId: r.id },
+  );
+  if (eff.discountKind !== 'percent') return { percent: null, tier: eff.tier };
+  return { percent: eff.discountValue, tier: eff.tier };
 }
 
 export function formatUsageDiscountBadge(
@@ -97,44 +74,96 @@ export function formatUsageDiscountBadge(
 export function buildCouponUsageGroupsFromReservations(
   reservations: readonly Reservation[],
   couponCode: string,
-  coupon: Pick<Coupon, 'discountKind' | 'discountValue' | 'seasonRule'>,
-  extrasCatalog: readonly Extra[],
+  coupon: Pick<Coupon, 'id' | 'discountKind' | 'discountValue' | 'seasonRule' | 'code'>,
+  _extrasCatalog: readonly Extra[],
 ): CouponUsageGroup[] {
   const code = couponCode.trim().toUpperCase();
-  const matching = reservations.filter((r) => {
+  const seasonYear = coupon.seasonRule ? activeSeasonYear(new Date()) : null;
+
+  const withCoupon = reservations.filter((r) => {
     const c = r.details?.couponCode?.trim().replaceAll(/\s+/g, '').toUpperCase();
-    return c === code && !isReservationCancelled(r.details);
+    return c === code;
   });
 
   const map = new Map<string, CouponUsageGroup>();
 
-  for (const r of matching) {
+  for (const r of withCoupon) {
     const key = clientKeyFromReservation(r);
     if (!key) continue;
-    const eff = effectiveDiscountPercent(r, extrasCatalog);
-    const degraded = isDegradedApplied(eff, coupon);
-    const startIso = r.start.toISOString();
-    const prev = map.get(key);
-    if (!prev) {
-      map.set(key, {
+
+    const countable = reservationToCouponCountable(r);
+    const inSeason = seasonYear == null || seasonYearForAprilSeptember(r.start) === seasonYear;
+    const counts = countable != null && countsTowardCouponTier(countable);
+
+    let group = map.get(key);
+    if (!group) {
+      group = {
         key,
         clientKey: key,
-        count: 1,
-        lastStartAt: startIso,
-        degradedCount: degraded ? 1 : 0,
-        lastEffectivePercent: eff,
-      });
-    } else {
-      prev.count += 1;
-      if (degraded) prev.degradedCount += 1;
-      if (new Date(startIso).getTime() > new Date(prev.lastStartAt).getTime()) {
-        prev.lastStartAt = startIso;
-        prev.lastEffectivePercent = eff;
-      }
+        count: 0,
+        fullCount: 0,
+        degradedCount: 0,
+        lastStartAt: r.start.toISOString(),
+        lastEffectivePercent: null,
+        seasonYear,
+        usages: [],
+        outOfSeasonCount: 0,
+      };
+      map.set(key, group);
+    }
+
+    if (!inSeason) {
+      group.outOfSeasonCount += 1;
+      continue;
+    }
+
+    if (!counts) continue;
+
+    const { percent: eff, tier } = effectiveCouponForReservation(r, coupon, reservations);
+    const status = resolveReservationStatus(r.details);
+    const entry: CouponUsageEntry = {
+      reservationId: r.id,
+      startAt: r.start.toISOString(),
+      status,
+      statusLabel: statusDisplayLabel(status, r.details, { installmentPlan: r.installmentPlan }),
+      tier,
+      percent: eff,
+    };
+
+    group.usages.push(entry);
+    group.count += 1;
+    if (tier === 'degraded') group.degradedCount += 1;
+    else group.fullCount += 1;
+
+    if (r.start.getTime() > new Date(group.lastStartAt).getTime()) {
+      group.lastStartAt = r.start.toISOString();
+      group.lastEffectivePercent = eff;
     }
   }
 
-  return [...map.values()].sort(
-    (a, b) => new Date(b.lastStartAt).getTime() - new Date(a.lastStartAt).getTime(),
-  );
+  for (const group of map.values()) {
+    group.usages.sort((a, b) => new Date(b.startAt).getTime() - new Date(a.startAt).getTime());
+  }
+
+  return [...map.values()]
+    .filter((g) => g.count > 0 || g.outOfSeasonCount > 0)
+    .sort((a, b) => new Date(b.lastStartAt).getTime() - new Date(a.lastStartAt).getTime());
+}
+
+export function formatUsageTierBadges(
+  coupon: Pick<Coupon, 'discountKind' | 'discountValue' | 'seasonRule'>,
+  group: Pick<CouponUsageGroup, 'fullCount' | 'degradedCount' | 'count' | 'seasonYear'>,
+): { fullLabel: string | null; degradedLabel: string | null; totalLabel: string } {
+  const fullPct = coupon.discountKind === 'percent' ? coupon.discountValue : null;
+  const degradedPct = coupon.seasonRule?.degradedDiscountValue ?? null;
+
+  return {
+    fullLabel: group.fullCount > 0 && fullPct != null ? `${group.fullCount}× ${fullPct} %` : null,
+    degradedLabel:
+      group.degradedCount > 0 && degradedPct != null ? `${group.degradedCount}× ${degradedPct} %` : null,
+    totalLabel:
+      group.seasonYear != null
+        ? `${group.count} loc. payée(s) (saison ${group.seasonYear})`
+        : `${group.count} location(s) payée(s)`,
+  };
 }

@@ -6,6 +6,8 @@ export enum UserRole {
   AGENT = 'AGENT',
   /** Portail propriétaire : ses bateaux, indisponibilités et réservations associées. */
   OWNER = 'OWNER',
+  /** Comptabilité : module financier uniquement. */
+  DAF = 'DAF',
 }
 
 export const CHECK_FLOW_KIND_VALUES = ['CHECK_IN', 'CHECK_OUT'] as const;

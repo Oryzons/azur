@@ -12,10 +12,13 @@ import { BoatsPage } from '@/pages/boats/BoatsPage';
 import { MembersPage } from '@/pages/members/MembersPage';
 import { CouponsPage } from '@/pages/coupons/CouponsPage';
 import { FinancesPage } from '@/pages/finances/FinancesPage';
-import { ParametresPage } from '@/pages/parametres/ParametresPage';
+import { ComptabilitePage } from '@/pages/comptabilite/ComptabilitePage';
+import { ParametresRoute } from '@/components/ParametresRoute';
 import { AgentOnlyRoute } from '@/components/AgentOnlyRoute';
+import { DafOnlyRoute } from '@/components/DafOnlyRoute';
 import { DeskOnlyRoute } from '@/components/DeskOnlyRoute';
 import { OwnerOnlyRoute } from '@/components/OwnerOnlyRoute';
+import { OwnerContactPage } from '@/pages/owner/OwnerContactPage';
 import { PlanningAccessRoute } from '@/components/PlanningAccessRoute';
 import { TabletLayout } from '@/layouts/TabletLayout';
 import { TabletTodayPage } from '@/pages/tablet/TabletTodayPage';
@@ -55,6 +58,7 @@ export default function App() {
 
         <Route element={<DashboardLayout />}>
           <Route path="/profil" element={<ProfilePage />} />
+          <Route path="/parametres" element={<ParametresRoute />} />
 
           {/* Calendrier / réservations : admin + propriétaire (avant OwnerOnlyRoute) */}
           <Route element={<PlanningAccessRoute />}>
@@ -65,6 +69,12 @@ export default function App() {
           {/* Accueil propriétaire */}
           <Route element={<OwnerOnlyRoute />}>
             <Route index element={<Navigate to="/calendrier" replace />} />
+            <Route path="/contact" element={<OwnerContactPage />} />
+          </Route>
+
+          {/* Comptabilité : DAF uniquement */}
+          <Route element={<DafOnlyRoute />}>
+            <Route path="/comptabilite" element={<ComptabilitePage />} />
           </Route>
 
           {/* Back-office admin */}
@@ -76,7 +86,6 @@ export default function App() {
             <Route path="/clients" element={<MembersPage />} />
             <Route path="/extras" element={<ExtrasPage />} />
             <Route path="/finances" element={<FinancesPage />} />
-            <Route path="/parametres" element={<ParametresPage />} />
             <Route path="/check-flow" element={<Navigate to="/check-flow/formulaires" replace />} />
             <Route path="/check-flow/formulaires" element={<CheckFlowFormsPage />} />
             <Route path="/check-flow/historique" element={<CheckFlowHistoryPage />} />

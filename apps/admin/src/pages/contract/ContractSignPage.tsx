@@ -14,6 +14,8 @@ import { ContractDocumentPhotoSlot } from '@/components/contract/ContractDocumen
 import { ContractSignaturePad } from '@/components/ContractSignaturePad';
 import { api } from '@/lib/api';
 import { extractApiErrorMessage } from '@/lib/apiError';
+import { MoneyAmount, PricingAmountRow } from '@/components/ui/MoneyAmount';
+import { DEFAULT_BRAND_NAME } from '@/lib/brand';
 
 type DocumentPhotos = {
   cniFrontUrl: string;
@@ -23,6 +25,33 @@ type DocumentPhotos = {
   airbusBadgePhotoUrl: string;
   requireAirbusBadge: boolean;
 };
+
+type DocumentsOnFile = {
+  cniFront: boolean;
+  cniBack: boolean;
+  boatLicenseFront: boolean;
+  boatLicenseBack: boolean;
+  airbusBadgePhoto: boolean;
+};
+
+function emptyDocumentsOnFile(): DocumentsOnFile {
+  return {
+    cniFront: false,
+    cniBack: false,
+    boatLicenseFront: false,
+    boatLicenseBack: false,
+    airbusBadgePhoto: false,
+  };
+}
+
+function OnFileHint(props: Readonly<{ show: boolean }>) {
+  if (!props.show) return null;
+  return (
+    <p className="mt-1 text-[11px] font-medium text-emerald-700">
+      Document déjà enregistré sur votre fiche — vous pouvez le remplacer en téléversant une nouvelle photo.
+    </p>
+  );
+}
 
 function emptyDocumentPhotos(requireAirbus = false): DocumentPhotos {
   return {
@@ -35,25 +64,41 @@ function emptyDocumentPhotos(requireAirbus = false): DocumentPhotos {
   };
 }
 
+function onFileFromApi(
+  src:
+    | {
+        hasCniFront?: boolean;
+        hasCniBack?: boolean;
+        hasBoatLicenseFront?: boolean;
+        hasBoatLicenseBack?: boolean;
+        hasAirbusBadgePhoto?: boolean;
+        requireAirbusBadge?: boolean;
+      }
+    | undefined,
+): DocumentsOnFile {
+  return {
+    cniFront: Boolean(src?.hasCniFront),
+    cniBack: Boolean(src?.hasCniBack),
+    boatLicenseFront: Boolean(src?.hasBoatLicenseFront),
+    boatLicenseBack: Boolean(src?.hasBoatLicenseBack),
+    airbusBadgePhoto: Boolean(src?.hasAirbusBadgePhoto),
+  };
+}
+
 function photosFromApi(
   src:
     | {
-        cniFrontUrl?: string | null;
-        cniBackUrl?: string | null;
-        boatLicenseFrontUrl?: string | null;
-        boatLicenseBackUrl?: string | null;
-        airbusBadgePhotoUrl?: string | null;
         requireAirbusBadge?: boolean;
       }
     | undefined,
   requireAirbus: boolean,
 ): DocumentPhotos {
   return {
-    cniFrontUrl: src?.cniFrontUrl?.trim() ?? '',
-    cniBackUrl: src?.cniBackUrl?.trim() ?? '',
-    boatLicenseFrontUrl: src?.boatLicenseFrontUrl?.trim() ?? '',
-    boatLicenseBackUrl: src?.boatLicenseBackUrl?.trim() ?? '',
-    airbusBadgePhotoUrl: src?.airbusBadgePhotoUrl?.trim() ?? '',
+    cniFrontUrl: '',
+    cniBackUrl: '',
+    boatLicenseFrontUrl: '',
+    boatLicenseBackUrl: '',
+    airbusBadgePhotoUrl: '',
     requireAirbusBadge: src?.requireAirbusBadge ?? requireAirbus,
   };
 }
@@ -70,7 +115,9 @@ type ContractSummary = {
   baseLabel: string;
   totalLabel: string;
   depositLabel: string | null;
-  extras: { name: string; amountLabel: string }[];
+  pricingLines: { description: string; amountLabel: string }[];
+  paymentItems: { label: string; methodLabel: string; amountLabel: string; paid: boolean }[];
+  balanceDueLabel: string | null;
   paid: boolean;
 };
 
@@ -89,11 +136,11 @@ type ContractPayload = {
   requiredDocuments?: string[];
   documentChecklist?: { label: string; status: 'provided' | 'missing'; source?: string; detail?: string }[];
   documentPhotos?: {
-    cniFrontUrl: string | null;
-    cniBackUrl: string | null;
-    boatLicenseFrontUrl: string | null;
-    boatLicenseBackUrl: string | null;
-    airbusBadgePhotoUrl: string | null;
+    hasCniFront: boolean;
+    hasCniBack: boolean;
+    hasBoatLicenseFront: boolean;
+    hasBoatLicenseBack: boolean;
+    hasAirbusBadgePhoto: boolean;
     requireAirbusBadge: boolean;
   };
   reservation: {
@@ -197,30 +244,65 @@ function ReservationSummaryCard(props: Readonly<{ summary: ContractSummary }>) {
         <SummaryRow icon={<Calendar className="h-4 w-4" aria-hidden />} label="Retour" value={s.endLabel} />
         <SummaryRow icon={<Anchor className="h-4 w-4" aria-hidden />} label="Base" value={s.baseLabel} />
       </div>
-      {s.extras.length > 0 ? (
+      {s.pricingLines.length > 0 ? (
         <div className="border-t border-zinc-100 px-5 py-3">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">Extras</p>
+          <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">Détail du tarif</p>
           <ul className="mt-2 space-y-1.5">
-            {s.extras.map((ex) => (
-              <li key={ex.name} className="flex justify-between text-sm">
-                <span className="text-zinc-700">{ex.name}</span>
-                <span className="font-semibold text-zinc-900">{ex.amountLabel}</span>
+            {s.pricingLines.map((line) => (
+              <li key={line.description} className="text-sm">
+                <PricingAmountRow
+                  label={line.description}
+                  amount={line.amountLabel}
+                  labelClassName="text-zinc-700"
+                  amountClassName="text-zinc-900"
+                />
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {s.paymentItems.length > 0 ? (
+        <div className="border-t border-zinc-100 px-5 py-3">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-zinc-500">Règlements</p>
+          <ul className="mt-2 space-y-2">
+            {s.paymentItems.map((item) => (
+              <li key={`${item.label}-${item.methodLabel}`} className="flex items-start justify-between gap-3 text-sm">
+                <div className="min-w-0">
+                  <p className="font-medium text-zinc-800">{item.label}</p>
+                  <p className="text-xs text-zinc-500">{item.methodLabel}</p>
+                </div>
+                <div className="shrink-0 text-right">
+                  <MoneyAmount className="font-semibold text-zinc-900">{item.amountLabel}</MoneyAmount>
+                  <p
+                    className={`text-xs font-medium ${item.paid ? 'text-emerald-600' : 'text-amber-600'}`}
+                  >
+                    {item.paid ? 'Réglé' : 'À régler'}
+                  </p>
+                </div>
               </li>
             ))}
           </ul>
         </div>
       ) : null}
       <div className="border-t border-zinc-200 bg-zinc-50 px-5 py-4">
-        <div className="flex items-end justify-between">
+        <div className="flex items-end justify-between gap-3">
           <span className="text-sm font-medium text-zinc-600">Total</span>
-          <span className="text-xl font-bold text-[#416B9F]">{s.totalLabel}</span>
+          <MoneyAmount className="text-xl font-bold text-[#416B9F]">{s.totalLabel}</MoneyAmount>
         </div>
         {s.depositLabel ? (
-          <p className="mt-2 text-xs text-zinc-500">Caution : {s.depositLabel}</p>
+          <p className="mt-2 text-xs text-zinc-500">
+            Caution : <MoneyAmount>{s.depositLabel}</MoneyAmount>
+          </p>
         ) : null}
-        <p className="mt-2 text-xs font-medium text-zinc-500">
-          {s.paid ? 'Paiement reçu' : 'Paiement en attente'}
-        </p>
+        {s.balanceDueLabel ? (
+          <p className="mt-2 text-xs font-semibold text-amber-700">
+            Reste à payer : <MoneyAmount>{s.balanceDueLabel}</MoneyAmount>
+          </p>
+        ) : s.paid ? (
+          <p className="mt-2 text-xs font-medium text-emerald-600">Tout est réglé</p>
+        ) : (
+          <p className="mt-2 text-xs font-medium text-amber-600">Paiement en attente</p>
+        )}
       </div>
     </div>
   );
@@ -236,6 +318,7 @@ export function ContractSignPage() {
   const [done, setDone] = useState(false);
   const [signedEmailSent, setSignedEmailSent] = useState(false);
   const [photos, setPhotos] = useState<DocumentPhotos>(() => emptyDocumentPhotos());
+  const [onFile, setOnFile] = useState<DocumentsOnFile>(() => emptyDocumentsOnFile());
 
   useEffect(() => {
     if (!token) {
@@ -249,6 +332,7 @@ export function ContractSignPage() {
         setPhotos(
           photosFromApi(res.data.documentPhotos, Boolean(res.data.documentPhotos?.requireAirbusBadge)),
         );
+        setOnFile(onFileFromApi(res.data.documentPhotos));
         if (res.data.signed) {
           setDone(true);
           setSignedEmailSent(Boolean(res.data.signedEmailSent));
@@ -298,9 +382,12 @@ export function ContractSignPage() {
   const showIdDocs = (data?.requiredDocuments ?? []).some((l) => /identit|passeport|\bcni\b|titre de s/i.test(l));
   const showLicenseDocs = (data?.requiredDocuments ?? []).some((l) => /permis|certificat/i.test(l));
   const docsOk =
-    (!showIdDocs || (photos.cniFrontUrl.trim() && photos.cniBackUrl.trim())) &&
-    (!showLicenseDocs || (photos.boatLicenseFrontUrl.trim() && photos.boatLicenseBackUrl.trim())) &&
-    (!requiresAirbus || photos.airbusBadgePhotoUrl.trim());
+    (!showIdDocs ||
+      ((photos.cniFrontUrl.trim() || onFile.cniFront) && (photos.cniBackUrl.trim() || onFile.cniBack))) &&
+    (!showLicenseDocs ||
+      ((photos.boatLicenseFrontUrl.trim() || onFile.boatLicenseFront) &&
+        (photos.boatLicenseBackUrl.trim() || onFile.boatLicenseBack))) &&
+    (!requiresAirbus || photos.airbusBadgePhotoUrl.trim() || onFile.airbusBadgePhoto);
   const readyToSign = Boolean(data?.canSign && docsOk);
 
   return (
@@ -312,7 +399,7 @@ export function ContractSignPage() {
           </div>
           <h1 className="text-xl font-bold text-zinc-900">Signature de votre location</h1>
           <p className="mt-1 text-sm text-zinc-500">
-            {summary?.brandName ?? 'Bleu Calanque'} — récapitulatif et contrat
+            {summary?.brandName ?? DEFAULT_BRAND_NAME} — récapitulatif et contrat
           </p>
         </div>
 
@@ -376,18 +463,30 @@ export function ContractSignPage() {
                           Pièce d&apos;identité
                         </p>
                         <div className="grid gap-3 sm:grid-cols-2">
-                          <ContractDocumentPhotoSlot
-                            label="Recto"
-                            required
-                            value={photos.cniFrontUrl}
-                            onChange={(url) => setPhotos((p) => ({ ...p, cniFrontUrl: url }))}
-                          />
-                          <ContractDocumentPhotoSlot
-                            label="Verso"
-                            required
-                            value={photos.cniBackUrl}
-                            onChange={(url) => setPhotos((p) => ({ ...p, cniBackUrl: url }))}
-                          />
+                          <div>
+                            <ContractDocumentPhotoSlot
+                              label="Recto"
+                              required
+                              value={photos.cniFrontUrl}
+                              onChange={(url) => {
+                                setPhotos((p) => ({ ...p, cniFrontUrl: url }));
+                                if (url.trim()) setOnFile((o) => ({ ...o, cniFront: false }));
+                              }}
+                            />
+                            <OnFileHint show={onFile.cniFront && !photos.cniFrontUrl.trim()} />
+                          </div>
+                          <div>
+                            <ContractDocumentPhotoSlot
+                              label="Verso"
+                              required
+                              value={photos.cniBackUrl}
+                              onChange={(url) => {
+                                setPhotos((p) => ({ ...p, cniBackUrl: url }));
+                                if (url.trim()) setOnFile((o) => ({ ...o, cniBack: false }));
+                              }}
+                            />
+                            <OnFileHint show={onFile.cniBack && !photos.cniBackUrl.trim()} />
+                          </div>
                         </div>
                       </div>
                     ) : null}
@@ -397,18 +496,30 @@ export function ContractSignPage() {
                           Permis bateau ou certificat côtier
                         </p>
                         <div className="grid gap-3 sm:grid-cols-2">
-                          <ContractDocumentPhotoSlot
-                            label="Recto"
-                            required
-                            value={photos.boatLicenseFrontUrl}
-                            onChange={(url) => setPhotos((p) => ({ ...p, boatLicenseFrontUrl: url }))}
-                          />
-                          <ContractDocumentPhotoSlot
-                            label="Verso"
-                            required
-                            value={photos.boatLicenseBackUrl}
-                            onChange={(url) => setPhotos((p) => ({ ...p, boatLicenseBackUrl: url }))}
-                          />
+                          <div>
+                            <ContractDocumentPhotoSlot
+                              label="Recto"
+                              required
+                              value={photos.boatLicenseFrontUrl}
+                              onChange={(url) => {
+                                setPhotos((p) => ({ ...p, boatLicenseFrontUrl: url }));
+                                if (url.trim()) setOnFile((o) => ({ ...o, boatLicenseFront: false }));
+                              }}
+                            />
+                            <OnFileHint show={onFile.boatLicenseFront && !photos.boatLicenseFrontUrl.trim()} />
+                          </div>
+                          <div>
+                            <ContractDocumentPhotoSlot
+                              label="Verso"
+                              required
+                              value={photos.boatLicenseBackUrl}
+                              onChange={(url) => {
+                                setPhotos((p) => ({ ...p, boatLicenseBackUrl: url }));
+                                if (url.trim()) setOnFile((o) => ({ ...o, boatLicenseBack: false }));
+                              }}
+                            />
+                            <OnFileHint show={onFile.boatLicenseBack && !photos.boatLicenseBackUrl.trim()} />
+                          </div>
                         </div>
                       </div>
                     ) : null}
@@ -419,8 +530,12 @@ export function ContractSignPage() {
                           label="Photo du badge"
                           required
                           value={photos.airbusBadgePhotoUrl}
-                          onChange={(url) => setPhotos((p) => ({ ...p, airbusBadgePhotoUrl: url }))}
+                          onChange={(url) => {
+                            setPhotos((p) => ({ ...p, airbusBadgePhotoUrl: url }));
+                            if (url.trim()) setOnFile((o) => ({ ...o, airbusBadgePhoto: false }));
+                          }}
                         />
+                        <OnFileHint show={onFile.airbusBadgePhoto && !photos.airbusBadgePhotoUrl.trim()} />
                       </div>
                     ) : null}
                   </div>
@@ -479,7 +594,7 @@ export function ContractSignPage() {
           </div>
         )}
 
-        <p className="mt-8 text-center text-xs text-zinc-400">Bleu Calanque</p>
+        <p className="mt-8 text-center text-xs text-zinc-400">{summary?.brandName ?? DEFAULT_BRAND_NAME}</p>
       </div>
     </div>
   );

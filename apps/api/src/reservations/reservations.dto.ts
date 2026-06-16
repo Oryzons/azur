@@ -17,6 +17,7 @@ import {
   CIVILITY_VALUES,
   CLIENT_TYPE_VALUES,
   PAYMENT_CHANNEL_VALUES,
+  PAYMENT_METHOD_VALUES,
   RESERVATION_STATUS_VALUES,
 } from '@bleu-calanque/shared';
 
@@ -196,6 +197,17 @@ export class UpsertReservationDto {
   installments?: number | null;
 
   @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(99)
+  depositPercent?: number | null;
+
+  @IsOptional()
+  @IsArray()
+  @IsIn(PAYMENT_METHOD_VALUES as unknown as string[], { each: true })
+  installmentMethods?: (typeof PAYMENT_METHOD_VALUES)[number][];
+
+  @IsOptional()
   @IsString()
   @MaxLength(2000)
   settlementNote?: string | null;
@@ -236,6 +248,12 @@ export class UpsertReservationDto {
   @ValidateNested({ each: true })
   @Type(() => ReservationRefundItemDto)
   refunds?: ReservationRefundItemDto[];
+}
+
+export class SettleInstallmentDto {
+  @IsOptional()
+  @IsBoolean()
+  paid?: boolean;
 }
 
 export class CancelReservationDto {

@@ -6,6 +6,13 @@ import type { Env } from '../config/env';
 
 type StripeClient = InstanceType<typeof Stripe>;
 
+export type StripeRefundTarget = {
+  checkoutSessionId?: string;
+  paymentIntentId?: string;
+  refundableCents: number;
+  sequence: number | null;
+};
+
 @Injectable()
 export class StripePaymentsService {
   private readonly logger = new Logger(StripePaymentsService.name);
@@ -41,6 +48,8 @@ export class StripePaymentsService {
     depositAmountCents: number | null;
     /** full = solde location ; supplement = complément après déplacement. */
     paymentKind?: 'full' | 'supplement';
+    /** Numéro d'échéance (1 = acompte, 2 = solde) pour un paiement en plusieurs fois. */
+    installmentSequence?: number;
   }): Promise<{ sessionId: string; url: string }> {
     const stripe = this.client();
     if (input.totalDueCents < 50) {
@@ -49,6 +58,9 @@ export class StripePaymentsService {
 
     const base = this.publicAppUrl().replace(/\/$/, '');
     const paymentKind = input.paymentKind ?? 'full';
+    const installmentMeta: { installmentSequence: string | null } = {
+      installmentSequence: input.installmentSequence != null ? String(input.installmentSequence) : null,
+    };
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
       customer_creation: 'always',
@@ -76,6 +88,7 @@ export class StripePaymentsService {
           paymentKind,
           expectedAmountCents: String(input.totalDueCents),
           depositAmountCents: String(input.depositAmountCents ?? 0),
+          ...installmentMeta,
         },
       },
       metadata: {
@@ -83,6 +96,7 @@ export class StripePaymentsService {
         paymentKind,
         expectedAmountCents: String(input.totalDueCents),
         depositAmountCents: String(input.depositAmountCents ?? 0),
+        ...installmentMeta,
       },
       success_url: `${base}/paiement/succes?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${base}/paiement/annule?reservation_id=${input.reservationId}`,
@@ -207,6 +221,53 @@ export class StripePaymentsService {
     }
   }
 
+  /** Frais réels depuis la balance_transaction Stripe (après paiement encaissé). */
+  async getCheckoutStripeFees(sessionId: string): Promise<{
+    feeCents: number;
+    netCents: number;
+    grossCents: number;
+  } | null> {
+    const stripe = this.client();
+    try {
+      const session = await stripe.checkout.sessions.retrieve(sessionId, {
+        expand: ['payment_intent.latest_charge.balance_transaction'],
+      });
+      if (session.payment_status !== 'paid') return null;
+
+      const piRaw = session.payment_intent;
+      const paymentIntent =
+        typeof piRaw === 'string'
+          ? await stripe.paymentIntents.retrieve(piRaw, {
+              expand: ['latest_charge.balance_transaction'],
+            })
+          : piRaw;
+      if (!paymentIntent) return null;
+
+      const chargeRaw = paymentIntent.latest_charge;
+      const charge =
+        typeof chargeRaw === 'string'
+          ? await stripe.charges.retrieve(chargeRaw, { expand: ['balance_transaction'] })
+          : chargeRaw;
+      if (!charge || typeof charge === 'string') return null;
+
+      const btRaw = charge.balance_transaction;
+      const balanceTransaction =
+        typeof btRaw === 'string' ? await stripe.balanceTransactions.retrieve(btRaw) : btRaw;
+      if (!balanceTransaction) return null;
+
+      return {
+        feeCents: balanceTransaction.fee,
+        netCents: balanceTransaction.net,
+        grossCents: balanceTransaction.amount,
+      };
+    } catch (err) {
+      this.logger.warn(
+        `Lecture frais Stripe (${sessionId}): ${err instanceof Error ? err.message : err}`,
+      );
+      return null;
+    }
+  }
+
   async getSessionSummary(sessionId: string) {
     const stripe = this.client();
     const session = await stripe.checkout.sessions.retrieve(sessionId, {
@@ -220,6 +281,11 @@ export class StripePaymentsService {
       expectedFromMeta != null && expectedFromMeta !== ''
         ? Number.parseInt(expectedFromMeta, 10)
         : null;
+    const seqRaw = session.metadata?.installmentSequence;
+    const installmentSequence =
+      seqRaw != null && seqRaw !== '' && Number.isFinite(Number.parseInt(seqRaw, 10))
+        ? Number.parseInt(seqRaw, 10)
+        : null;
 
     return {
       id: session.id,
@@ -228,6 +294,7 @@ export class StripePaymentsService {
       amountTotalCents: session.amount_total ?? null,
       currency: session.currency ?? null,
       paymentKind,
+      installmentSequence,
       expectedAmountCents:
         expectedAmountCents != null && Number.isFinite(expectedAmountCents)
           ? expectedAmountCents
@@ -262,6 +329,150 @@ export class StripePaymentsService {
         `Lecture montant remboursable Stripe (${checkoutSessionId}): ${err instanceof Error ? err.message : err}`,
       );
       return null;
+    }
+  }
+
+  /** Solde du compte Stripe (disponible + en attente de règlement), lecture directe API. */
+  async getAccountBalance(): Promise<{
+    availableCents: number;
+    pendingCents: number;
+    totalCents: number;
+    currency: string;
+    livemode: boolean;
+    fetchedAt: string;
+  }> {
+    const stripe = this.client();
+    const balance = await stripe.balance.retrieve();
+    const currency = 'eur';
+    const pick = (rows: { currency: string; amount: number }[]) =>
+      rows.find((r) => r.currency === currency)?.amount ?? 0;
+    const availableCents = pick(balance.available);
+    const pendingCents = pick(balance.pending);
+    return {
+      availableCents,
+      pendingCents,
+      totalCents: availableCents + pendingCents,
+      currency,
+      livemode: balance.livemode,
+      fetchedAt: new Date().toISOString(),
+    };
+  }
+
+  /** Paiements Stripe encore remboursables, via recherche metadata reservationId (rattrapage sans session en BDD). */
+  /** Total déjà remboursé côté Stripe (tous PaymentIntent de la réservation). */
+  async getTotalRefundedCentsForReservation(reservationId: string): Promise<number> {
+    const stripe = this.client();
+    let total = 0;
+    try {
+      const { data } = await stripe.paymentIntents.search({
+        query: `metadata['reservationId']:'${reservationId}'`,
+        limit: 20,
+      });
+      for (const pi of data) {
+        const refunded =
+          'amount_refunded' in pi ? Number((pi as { amount_refunded?: number }).amount_refunded ?? 0) : 0;
+        total += refunded;
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Lecture remboursements Stripe (${reservationId}): ${err instanceof Error ? err.message : err}`,
+      );
+    }
+    return total;
+  }
+
+  async findRefundablePaymentTargetsForReservation(reservationId: string): Promise<StripeRefundTarget[]> {
+    const stripe = this.client();
+    const targets: StripeRefundTarget[] = [];
+    try {
+      const { data } = await stripe.paymentIntents.search({
+        query: `metadata['reservationId']:'${reservationId}'`,
+        limit: 20,
+      });
+      for (const pi of data) {
+        if (pi.status !== 'succeeded') continue;
+        const received = pi.amount_received ?? pi.amount ?? 0;
+        const refunded =
+          'amount_refunded' in pi ? Number((pi as { amount_refunded?: number }).amount_refunded ?? 0) : 0;
+        const refundableCents = Math.max(0, received - refunded);
+        if (refundableCents <= 0) continue;
+        const seqRaw = pi.metadata?.installmentSequence;
+        const parsed = seqRaw != null && seqRaw !== '' ? Number.parseInt(seqRaw, 10) : Number.NaN;
+        targets.push({
+          paymentIntentId: pi.id,
+          refundableCents,
+          sequence: Number.isFinite(parsed) ? parsed : null,
+        });
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Recherche PaymentIntent Stripe (${reservationId}): ${err instanceof Error ? err.message : err}`,
+      );
+    }
+    return targets.sort((a, b) => b.refundableCents - a.refundableCents);
+  }
+
+  async getPaymentIntentRefundableCents(paymentIntentId: string): Promise<number | null> {
+    const stripe = this.client();
+    try {
+      const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+      if (paymentIntent.status !== 'succeeded') return null;
+      const received = paymentIntent.amount_received ?? paymentIntent.amount ?? 0;
+      const refunded =
+        'amount_refunded' in paymentIntent
+          ? Number((paymentIntent as { amount_refunded?: number }).amount_refunded ?? 0)
+          : 0;
+      return Math.max(0, received - refunded);
+    } catch (err) {
+      this.logger.warn(
+        `Lecture PaymentIntent remboursable (${paymentIntentId}): ${err instanceof Error ? err.message : err}`,
+      );
+      return null;
+    }
+  }
+
+  async refundPaymentTarget(
+    target: StripeRefundTarget,
+    amountCents: number,
+  ): Promise<{ refundId: string; amountCents: number }> {
+    if (target.checkoutSessionId) {
+      return this.refundCheckoutPayment({ checkoutSessionId: target.checkoutSessionId, amountCents });
+    }
+    if (target.paymentIntentId) {
+      return this.refundPaymentIntent(target.paymentIntentId, amountCents);
+    }
+    throw new BadRequestException('Cible de remboursement Stripe invalide.');
+  }
+
+  async refundPaymentIntent(
+    paymentIntentId: string,
+    amountCents: number,
+  ): Promise<{ refundId: string; amountCents: number }> {
+    if (!Number.isFinite(amountCents) || amountCents < 1) {
+      throw new BadRequestException('Montant de remboursement invalide.');
+    }
+    const stripe = this.client();
+    const remaining = await this.getPaymentIntentRefundableCents(paymentIntentId);
+    if (remaining != null && amountCents > remaining) {
+      throw new BadRequestException(
+        `Le montant du remboursement (${(amountCents / 100).toFixed(2)} €) dépasse le montant encore remboursable (${(remaining / 100).toFixed(2)} €).`,
+      );
+    }
+    try {
+      const refund = await stripe.refunds.create({
+        payment_intent: paymentIntentId,
+        amount: amountCents,
+      });
+      this.logger.log(
+        `Remboursement Stripe ${refund.id} (${(amountCents / 100).toFixed(2)} €) — PI ${paymentIntentId}`,
+      );
+      return {
+        refundId: refund.id,
+        amountCents: refund.amount ?? amountCents,
+      };
+    } catch (err) {
+      if (err instanceof BadRequestException) throw err;
+      throw new BadRequestException(stripeErrorMessageFr(err, 'Remboursement Stripe impossible.'));
     }
   }
 

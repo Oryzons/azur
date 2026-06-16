@@ -51,6 +51,10 @@ export const PAYMENT_CHANNEL_VALUES = ['ONLINE', 'OFFLINE'] as const;
 
 export const paymentChannelSchema = z.enum(PAYMENT_CHANNEL_VALUES);
 
+export const PAYMENT_METHOD_VALUES = ['ONLINE', 'CASH', 'CARD_ONSITE', 'CHECK', 'TRANSFER'] as const;
+
+export const paymentMethodSchema = z.enum(PAYMENT_METHOD_VALUES);
+
 export function formatZodIssues(error: z.ZodError): { message: string; errors: { path: string; message: string }[] } {
   return {
     message: 'Validation échouée',

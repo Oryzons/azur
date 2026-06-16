@@ -1,17 +1,21 @@
 import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post, Put, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { RentalContractsService } from '../rental-contracts/rental-contracts.service';
+import { RefundReceiptService } from './refund-receipt.service';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { AdminOnly, DeskOnly, ReservationsRead } from '../common/decorators/role-groups.decorator';
+import { AdminOnly, ComptabiliteOrDesk, DeskOnly, ReservationsRead } from '../common/decorators/role-groups.decorator';
 import type { AuthUser } from '@bleu-calanque/shared';
 import { ReservationsService } from './reservations.service';
-import { CancelReservationDto, CreateReservationRefundDto, UpsertReservationDto } from './reservations.dto';
+import { CancelReservationDto, CreateReservationRefundDto, SettleInstallmentDto, UpsertReservationDto } from './reservations.dto';
+import { StripePaymentsService } from '../notifications/stripe-payments.service';
 
 @Controller('reservations')
 export class ReservationsController {
   constructor(
     private readonly reservations: ReservationsService,
     private readonly rentalContracts: RentalContractsService,
+    private readonly refundReceipts: RefundReceiptService,
+    private readonly stripe: StripePaymentsService,
   ) {}
 
   @Get()
@@ -30,6 +34,27 @@ export class ReservationsController {
   @DeskOnly()
   syncPendingStripePayments() {
     return this.reservations.syncPendingStripePayments();
+  }
+
+  @Post('sync-stripe-fees')
+  @ComptabiliteOrDesk()
+  syncStripeFees() {
+    return this.reservations.syncStripeFees();
+  }
+
+  @Get('stripe-balance')
+  @ReservationsRead()
+  async stripeBalance() {
+    if (!this.stripe.isConfigured()) {
+      return { configured: false as const };
+    }
+    try {
+      const balance = await this.stripe.getAccountBalance();
+      return { configured: true as const, balance };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Lecture du solde Stripe impossible.';
+      return { configured: true as const, error: message };
+    }
   }
 
   @Put(':id')
@@ -54,6 +79,15 @@ export class ReservationsController {
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('X-Contract-Pdf-Kind', kind);
+    res.send(pdf);
+  }
+
+  @Get(':id/refund-receipt/download')
+  @DeskOnly()
+  async downloadRefundReceipt(@Param('id', ParseUUIDPipe) id: string, @Res() res: Response) {
+    const { pdf, filename } = await this.refundReceipts.getPdfForReservation(id);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(pdf);
   }
 
@@ -85,6 +119,22 @@ export class ReservationsController {
   @DeskOnly()
   syncStripePayment(@Param('id', ParseUUIDPipe) id: string) {
     return this.reservations.syncStripePayment(id);
+  }
+
+  @Post(':id/sync-stripe-refunds')
+  @DeskOnly()
+  syncStripeRefunds(@Param('id', ParseUUIDPipe) id: string) {
+    return this.reservations.syncStripeRefunds(id);
+  }
+
+  @Post(':id/installments/:sequence/settle')
+  @DeskOnly()
+  settleInstallment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('sequence') sequence: string,
+    @Body() body: SettleInstallmentDto,
+  ) {
+    return this.reservations.settleInstallment(id, Number(sequence), body.paid ?? true);
   }
 
   @Post(':id/refund')

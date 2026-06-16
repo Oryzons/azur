@@ -31,15 +31,22 @@ import {
   type ReservationContractSnapshotSource,
 } from './rental-contract-snapshot';
 import {
+  DEFAULT_BRAND_NAME,
+  buildDocumentPaymentLines,
+  buildDocumentPaymentObligations,
+  documentPaymentBalanceCents,
+  isPaymentMethod,
   isReservationPaidForContract,
   resolveRentalContractStatus,
   resolveRentalLocations,
+  resolveStoreCreditAppliedCents,
 } from '@bleu-calanque/shared';
+import { MemberCreditsService } from '../member-credits/member-credits.service';
 import { InternalNotificationsService } from '../internal-notifications/internal-notifications.service';
 import { ReservationNotificationsService } from '../notifications/reservation-notifications.service';
-import { computeReservationTotalDueCents } from '../pricing/reservation-pricing';
+import { computeReservationGrandTotalCents, reservationPricingInputFromRow } from '../pricing/reservation-pricing';
 import { mapReservationExtrasForPricing } from '../pricing/reservation-pricing-map';
-import { computeExtraLineCents, rentalDaysBetween } from '@bleu-calanque/shared';
+import { computeExtraLineCents, extraDocumentLabel, rentalDaysBetween } from '@bleu-calanque/shared';
 import { CouponDiscountKind } from '@prisma/client';
 import {
   buildRentalContractSignedEmailHtml,
@@ -58,7 +65,9 @@ export type RentalContractPublicSummary = {
   baseLabel: string;
   totalLabel: string;
   depositLabel: string | null;
-  extras: { name: string; amountLabel: string }[];
+  pricingLines: { description: string; amountLabel: string }[];
+  paymentItems: { label: string; methodLabel: string; amountLabel: string; paid: boolean }[];
+  balanceDueLabel: string | null;
   paid: boolean;
 };
 import { z } from 'zod';
@@ -90,6 +99,7 @@ const operatorSignBodySchema = z.object({
 const reservationInclude = {
   boat: { include: { ownerMember: true } },
   extras: { include: { extra: true } },
+  installmentPlan: { orderBy: { sequence: 'asc' as const } },
   clientMember: {
     select: {
       cniFrontUrl: true,
@@ -116,6 +126,7 @@ export class RentalContractsService {
     private readonly reservationNotifications: ReservationNotificationsService,
     private readonly internalNotifications: InternalNotificationsService,
     private readonly media: SecureMediaService,
+    private readonly memberCredits: MemberCreditsService,
   ) {}
 
   /** Rattrape le paiement Stripe avant lecture / signature du contrat (webhook manquant). */
@@ -156,7 +167,7 @@ export class RentalContractsService {
       if (reservation.paymentChannel === PaymentChannel.ONLINE) {
         return 'Le paiement en ligne doit être confirmé avant la signature du contrat. Utilisez le bouton « Payer » ci-dessous, puis revenez sur cette page.';
       }
-      return 'Le paiement de la location doit être enregistré par la base avant la signature du contrat. Contactez Bleu Calanque.';
+      return `Le paiement de la location doit être enregistré par la base avant la signature du contrat. Contactez ${DEFAULT_BRAND_NAME}.`;
     }
     if (!operatorSignatureReady) {
       return "La validation par l'équipe est en cours. Réessayez dans quelques instants ou contactez la base.";
@@ -566,11 +577,11 @@ export class RentalContractsService {
       requiredDocuments: requiredLabels,
       documentChecklist: checklist,
       documentPhotos: {
-        cniFrontUrl: reservation.clientMember?.cniFrontUrl ?? null,
-        cniBackUrl: reservation.clientMember?.cniBackUrl ?? null,
-        boatLicenseFrontUrl: reservation.clientMember?.boatLicenseFrontUrl ?? null,
-        boatLicenseBackUrl: reservation.clientMember?.boatLicenseBackUrl ?? null,
-        airbusBadgePhotoUrl: reservation.clientMember?.airbusBadgePhotoUrl ?? null,
+        hasCniFront: Boolean(reservation.clientMember?.cniFrontUrl?.trim()),
+        hasCniBack: Boolean(reservation.clientMember?.cniBackUrl?.trim()),
+        hasBoatLicenseFront: Boolean(reservation.clientMember?.boatLicenseFrontUrl?.trim()),
+        hasBoatLicenseBack: Boolean(reservation.clientMember?.boatLicenseBackUrl?.trim()),
+        hasAirbusBadgePhoto: Boolean(reservation.clientMember?.airbusBadgePhotoUrl?.trim()),
         requireAirbusBadge,
       },
       reservation: {
@@ -585,9 +596,7 @@ export class RentalContractsService {
 
   private buildPublicSummary(vm: RentalContractViewModel, paid: boolean): RentalContractPublicSummary {
     const base = [vm.company.addressLine, vm.company.postalCode, vm.company.city].filter(Boolean).join(', ');
-    const extras = vm.pricingLines
-      .filter((l) => !l.description.startsWith('Location ') && !l.description.startsWith('Remise') && !l.description.startsWith('Coupon'))
-      .map((l) => ({ name: l.description, amountLabel: l.ttc }));
+    const balanceDueLabel = vm.balanceDue !== '0,00 €' && vm.balanceDue !== '—' ? vm.balanceDue : null;
 
     return {
       brandName: vm.company.brandName,
@@ -601,7 +610,17 @@ export class RentalContractsService {
       baseLabel: base || '—',
       totalLabel: vm.pricingTotal.ttc,
       depositLabel: vm.bateau.deposit !== '—' ? vm.bateau.deposit : null,
-      extras,
+      pricingLines: vm.pricingLines.map((l) => ({
+        description: l.description,
+        amountLabel: l.ttc,
+      })),
+      paymentItems: vm.paymentObligations.map((p) => ({
+        label: p.label,
+        methodLabel: p.methodLabel,
+        amountLabel: p.amount,
+        paid: p.paid,
+      })),
+      balanceDueLabel,
       paid,
     };
   }
@@ -681,12 +700,17 @@ export class RentalContractsService {
     });
     if (docsBlocked) throw new BadRequestException(docsBlocked);
 
+    const clientSignatureStored = await this.media.processOptionalImageUrl(body.clientSignature);
+    if (!clientSignatureStored) {
+      throw new BadRequestException('Signature client invalide.');
+    }
+
     const signedAt = new Date();
     const vm = await this.buildViewModel(
       row.reservation,
       row,
       {
-        clientSignature: body.clientSignature,
+        clientSignature: clientSignatureStored,
         operatorSignature,
         signedAt,
       },
@@ -701,7 +725,7 @@ export class RentalContractsService {
     await this.prisma.reservationRentalContract.update({
       where: { id: row.id },
       data: {
-        clientSignatureDataUrl: body.clientSignature,
+        clientSignatureDataUrl: clientSignatureStored,
         operatorSignatureDataUrl: operatorSignature,
         signedAt,
         signedHtml,
@@ -760,7 +784,7 @@ export class RentalContractsService {
     }
 
     const company = await this.companyRow();
-    const brand = company?.brandName ?? 'Bleu Calanque';
+    const brand = company?.brandName ?? DEFAULT_BRAND_NAME;
     const vm = await this.buildViewModel(row.reservation, row, {
       clientSignature: row.clientSignatureDataUrl ?? undefined,
       operatorSignature: row.operatorSignatureDataUrl ?? undefined,
@@ -954,7 +978,7 @@ export class RentalContractsService {
     }
 
     const company = await this.prisma.companySettings.findUnique({ where: { id: 'company_settings' } });
-    const brand = company?.brandName ?? 'Bleu Calanque';
+    const brand = company?.brandName ?? DEFAULT_BRAND_NAME;
 
     if (!this.mail.isConfigured()) {
       throw new BadRequestException('RESEND_API_KEY non configuré.');
@@ -1015,6 +1039,18 @@ export class RentalContractsService {
         clientLastName?: string;
         civility?: string;
       };
+    } catch {
+      return null;
+    }
+  }
+
+  private parseInstallmentMethodsFromDetails(json: string | null) {
+    if (!json) return null;
+    try {
+      const parsed = JSON.parse(json) as { installmentMethods?: unknown };
+      if (!Array.isArray(parsed.installmentMethods)) return null;
+      const methods = parsed.installmentMethods.filter(isPaymentMethod);
+      return methods.length > 0 ? methods : null;
     } catch {
       return null;
     }
@@ -1153,7 +1189,7 @@ export class RentalContractsService {
       if (cents > 0) {
         const ex = this.vatFromTtc(cents / 100, line.extra.vatRate ?? 20);
         pricingLines.push({
-          description: line.extra.name,
+          description: extraDocumentLabel(line.extra.name, line.extra.paymentChannel),
           ht: `${ex.ht.toFixed(2).replace('.', ',')} €`,
           vatPct: `${line.extra.vatRate ?? 20} %`,
           vat: `${ex.vat.toFixed(2).replace('.', ',')} €`,
@@ -1176,44 +1212,50 @@ export class RentalContractsService {
       });
     }
 
-    const computedTotalCents = await computeReservationTotalDueCents(this.prisma, {
-      rentalPriceCents: r.rentalPriceCents,
-      discountPercent: r.discountPercent,
-      couponCode: r.couponCode,
-      clientMemberId: r.clientMemberId,
-      clientEmail: r.clientEmail,
-      startAt: r.startAt,
-      endAt: r.endAt,
-      extras: mapReservationExtrasForPricing(r.extras),
-    });
-    const totalCents =
-      r.paymentCapturedAt && r.totalDueCents != null && r.totalDueCents > 0
-        ? r.totalDueCents
-        : computedTotalCents > 0
-          ? computedTotalCents
-          : (r.totalDueCents ?? 0);
+    const { pricing: priced, coupon: effectiveCoupon } = await computeReservationGrandTotalCents(
+      this.prisma,
+      reservationPricingInputFromRow(r, mapReservationExtrasForPricing(r.extras)),
+    );
+    const recordedCredit = await this.memberCredits.appliedCentsForReservation(r.id);
+    const storeCreditCents = resolveStoreCreditAppliedCents(
+      priced.payableOnlineCents,
+      r.totalDueCents,
+      recordedCredit,
+    );
+    const netPayableOnlineCents = Math.max(0, priced.payableOnlineCents - storeCreditCents);
+    const totalCents = Math.max(0, priced.grandTotalCents - storeCreditCents);
 
-    const couponDiscountCents = Math.max(0, subtotalCents - totalCents);
-    if (r.couponCode?.trim() && couponDiscountCents > 0) {
+    if (r.couponCode?.trim() && priced.couponDiscountOnRentalCents > 0) {
       const code = r.couponCode.trim();
-      const coupon = await this.prisma.coupon.findUnique({
-        where: { code: code.replaceAll(/\s+/g, '').toUpperCase() },
-      });
       let couponDetail = '';
-      if (coupon) {
+      if (effectiveCoupon) {
         const kindLabel =
-          coupon.discountKind === CouponDiscountKind.PERCENT
-            ? `−${coupon.discountValue} %`
-            : `−${coupon.discountValue.toFixed(2).replace('.', ',')} €`;
+          effectiveCoupon.discountKind === CouponDiscountKind.PERCENT
+            ? `−${effectiveCoupon.discountValue} %`
+            : `−${effectiveCoupon.discountValue.toFixed(2).replace('.', ',')} €`;
         couponDetail = ` (${kindLabel})`;
+        if (effectiveCoupon.tier === 'degraded') {
+          couponDetail += ' · palier réduit';
+        }
       }
-      const couponDisc = this.vatFromTtc(couponDiscountCents / 100);
+      const couponDisc = this.vatFromTtc(priced.couponDiscountOnRentalCents / 100);
       pricingLines.push({
         description: `Coupon ${code}${couponDetail} · sur location uniquement`,
         ht: this.formatEurosSigned(-couponDisc.ht),
         vatPct: '20 %',
         vat: this.formatEurosSigned(-couponDisc.vat),
         ttc: this.formatEurosSigned(-couponDisc.ttc),
+      });
+    }
+
+    if (storeCreditCents > 0) {
+      const credit = this.vatFromTtc(storeCreditCents / 100);
+      pricingLines.push({
+        description: 'Avoir client',
+        ht: this.formatEurosSigned(-credit.ht),
+        vatPct: '20 %',
+        vat: this.formatEurosSigned(-credit.vat),
+        ttc: this.formatEurosSigned(-credit.ttc),
       });
     }
 
@@ -1231,25 +1273,47 @@ export class RentalContractsService {
       sumVat += parseSigned(line.vat);
     }
 
-    const payments: RentalContractViewModel['payments'] = [];
-    if (r.paymentCapturedAt) {
-      payments.push({
-        date: this.formatDt(r.paymentCapturedAt),
-        method: r.paymentChannel === PaymentChannel.ONLINE ? 'CB (En ligne)' : 'Hors ligne',
-        amount: this.euros(totalCents),
-      });
-    }
+    const detailsMethods = this.parseInstallmentMethodsFromDetails(r.detailsJson);
+    const paymentDocInput = {
+      paymentChannel: r.paymentChannel,
+      paymentCapturedAt: r.paymentCapturedAt,
+      settlementNote: details.settlementNote ?? r.settlementNote,
+      totalDueCents: netPayableOnlineCents,
+      storeCreditAppliedCents: storeCreditCents,
+      installmentPlan: r.installmentPlan.map((p) => ({
+        sequence: p.sequence,
+        label: p.label,
+        amountCents: p.amountCents,
+        method: p.method,
+        status: p.status,
+        paidAt: p.paidAt,
+      })),
+      fallbackMethod: detailsMethods?.[0] ?? null,
+    };
+    const payments: RentalContractViewModel['payments'] = buildDocumentPaymentLines(paymentDocInput).map(
+      (line) => ({
+        date: line.paidAt ? this.formatDt(line.paidAt) : '—',
+        method: line.methodLabel,
+        amount: this.euros(line.amountCents),
+      }),
+    );
+    const paymentObligations: RentalContractViewModel['paymentObligations'] =
+      buildDocumentPaymentObligations(paymentDocInput).map((o) => ({
+        label: o.label,
+        methodLabel: o.methodLabel,
+        amount: this.euros(o.amountCents),
+        paid: o.paid,
+      }));
 
-    const collected = r.paymentCapturedAt ? totalCents : 0;
-    const balance = Math.max(0, totalCents - collected);
+    const balance = documentPaymentBalanceCents(paymentDocInput, priced.grandTotalCents);
 
     const addressParts = [r.clientAddress, r.clientPostalCode, r.clientCity, r.clientCountry].filter(Boolean);
 
     return {
       contractNumber: contract.contractNumber,
       company: {
-        brandName: company?.brandName ?? 'Bleu Calanque',
-        legalName: company?.legalName ?? company?.brandName ?? 'Bleu Calanque',
+        brandName: company?.brandName ?? DEFAULT_BRAND_NAME,
+        legalName: company?.legalName ?? company?.brandName ?? DEFAULT_BRAND_NAME,
         siret: company?.siret ?? '',
         contactPhone: company?.contactPhone ?? '',
         addressLine: company?.addressLine ?? '',
@@ -1259,7 +1323,7 @@ export class RentalContractsService {
       },
       template,
       documentTitle: template.title,
-      introLegalName: company?.legalName ?? company?.brandName ?? 'Bleu Calanque',
+      introLegalName: company?.legalName ?? company?.brandName ?? DEFAULT_BRAND_NAME,
       locataire: {
         name: locataireName,
         address: addressParts.join(', ') || '—',
@@ -1318,6 +1382,7 @@ export class RentalContractsService {
         ttc: `${total.ttc.toFixed(2).replace('.', ',')} €`,
       },
       payments,
+      paymentObligations,
       balanceDue: this.euros(balance),
       clientSignatureImg: signatures?.clientSignature ?? null,
       operatorSignatureImg:

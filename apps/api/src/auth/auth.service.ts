@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   UnauthorizedException,
@@ -46,6 +47,9 @@ export class AuthService {
     input: RegisterInput,
     meta: { ip?: string; userAgent?: string } = {},
   ): Promise<AuthTokens> {
+    if (!this.isPublicRegisterEnabled()) {
+      throw new ForbiddenException('Inscription publique désactivée.');
+    }
     const email = input.email.toLowerCase();
     const exists = await this.prisma.user.findUnique({ where: { email } });
     if (exists) throw new ConflictException('Email déjà utilisé');
@@ -61,17 +65,7 @@ export class AuthService {
       },
     });
 
-    const tokens = await this.issueTokens(
-      {
-        id: user.id,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        role: user.role as UserRole,
-        isActive: user.isActive,
-      },
-      meta,
-    );
+    const tokens = await this.issueTokens(user, meta);
 
     await this.audit.log({
       action: AuditAction.REGISTER,
@@ -122,7 +116,7 @@ export class AuthService {
       this.logger.warn(`Impossible de mettre à jour lastLoginAt pour ${user.email} : ${(e as Error).message}`);
     }
 
-    const tokens = await this.issueTokens(this.toThinUser(user), meta);
+    const tokens = await this.issueTokens(user, meta);
     await this.audit.log({
       action: AuditAction.LOGIN,
       entity: AuditEntity.AUTH,
@@ -148,7 +142,7 @@ export class AuthService {
       data: { revokedAt: new Date() },
     });
 
-    return this.issueTokens(this.toThinUser(row.user), meta);
+    return this.issueTokens(row.user, meta);
   }
 
   async logout(refreshToken: string, meta: { ip?: string } = {}): Promise<void> {
@@ -176,6 +170,17 @@ export class AuthService {
     if (!user?.isActive) return null;
     void this.touchPresence(id);
     return this.toAuthUser(user);
+  }
+
+  private async resolvePermComptabilite(email: string, role: string): Promise<boolean> {
+    if (role === UserRole.DAF) return true;
+    const member = await this.prisma.member.findUnique({
+      where: { email: email.toLowerCase() },
+      select: { role: true, permComptabilite: true },
+    });
+    if (!member) return false;
+    if (member.role === 'DAF') return true;
+    return Boolean(member.permComptabilite);
   }
 
   /** Met à jour l'activité des sessions refresh encore valides (throttle ~1 min / utilisateur). */
@@ -212,6 +217,7 @@ export class AuthService {
               PrismaUserRole.STAFF,
               PrismaUserRole.AGENT,
               PrismaUserRole.OWNER,
+              PrismaUserRole.DAF,
             ],
           },
         },
@@ -254,7 +260,7 @@ export class AuthService {
       .sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt));
   }
 
-  private toThinUser(user: {
+  private async toAuthUser(u: {
     id: string;
     email: string;
     firstName: string;
@@ -273,49 +279,8 @@ export class AuthService {
     ownerMemberId?: string | null;
     isActive: boolean;
     mustChangePassword?: boolean;
-  }) {
-    return {
-      id: user.id,
-      email: user.email,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      civility: user.civility ?? null,
-      phone: user.phone ?? null,
-      birthDate: user.birthDate ? user.birthDate.toISOString() : null,
-      nationality: user.nationality ?? null,
-      address: user.address ?? null,
-      city: user.city ?? null,
-      postalCode: user.postalCode ?? null,
-      country: user.country ?? null,
-      company: user.company ?? null,
-      avatarUrl: user.avatarUrl ?? null,
-      role: user.role as UserRole,
-      ownerMemberId: user.ownerMemberId ?? null,
-      isActive: user.isActive,
-      mustChangePassword: Boolean(user.mustChangePassword),
-    };
-  }
-
-  private toAuthUser(u: {
-    id: string;
-    email: string;
-    firstName: string;
-    lastName: string;
-    civility?: string | null;
-    phone?: string | null;
-    birthDate?: Date | null;
-    nationality?: string | null;
-    address?: string | null;
-    city?: string | null;
-    postalCode?: string | null;
-    country?: string | null;
-    company?: string | null;
-    avatarUrl?: string | null;
-    role: string;
-    ownerMemberId?: string | null;
-    isActive: boolean;
-    mustChangePassword?: boolean;
-  }): AuthUser {
+  }): Promise<AuthUser> {
+    const permComptabilite = await this.resolvePermComptabilite(u.email, u.role);
     return {
       id: u.id,
       email: u.email,
@@ -335,6 +300,7 @@ export class AuthService {
       ownerMemberId: u.ownerMemberId ?? null,
       isActive: u.isActive,
       mustChangePassword: Boolean(u.mustChangePassword),
+      permComptabilite,
     };
   }
 
@@ -359,7 +325,26 @@ export class AuthService {
   }
 
   private async issueTokens(
-    user: { id: string; email: string; role: UserRole; firstName: string; lastName: string; isActive: boolean },
+    user: {
+      id: string;
+      email: string;
+      role: string;
+      firstName: string;
+      lastName: string;
+      civility?: string | null;
+      phone?: string | null;
+      birthDate?: Date | null;
+      nationality?: string | null;
+      address?: string | null;
+      city?: string | null;
+      postalCode?: string | null;
+      country?: string | null;
+      company?: string | null;
+      avatarUrl?: string | null;
+      ownerMemberId?: string | null;
+      isActive: boolean;
+      mustChangePassword?: boolean;
+    },
     meta: { ip?: string; userAgent?: string },
   ): Promise<AuthTokens> {
     const payload: JwtPayload = { sub: user.id, email: user.email, role: user.role };
@@ -385,7 +370,14 @@ export class AuthService {
     return {
       accessToken,
       refreshToken: refreshRaw,
-      user: this.toThinUser(user),
+      user: await this.toAuthUser(user),
     };
+  }
+
+  /** Autorise POST /auth/register — désactivé en production sauf AUTH_PUBLIC_REGISTER_ENABLED=true. */
+  private isPublicRegisterEnabled(): boolean {
+    const explicit = this.config.get<boolean | undefined>('AUTH_PUBLIC_REGISTER_ENABLED', { infer: true });
+    if (explicit !== undefined) return explicit;
+    return this.config.get('NODE_ENV', { infer: true }) !== 'production';
   }
 }

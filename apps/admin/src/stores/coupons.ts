@@ -1,3 +1,10 @@
+import {
+  countPriorSeasonCountableCouponUses,
+  type CouponTierEvaluationContext,
+  seasonYearForAprilSeptember,
+  type CouponCountableReservation,
+} from '@bleu-calanque/shared';
+import { couponClientFromKey } from '@/lib/couponReservation';
 import { create } from 'zustand';
 import { api } from '@/lib/api';
 
@@ -36,25 +43,19 @@ function endOfDayFromIso(isoDate: string) {
   return new Date(`${isoDate.trim()}T23:59:59.999`).getTime();
 }
 
-export function isDateInAprilSeptemberSeason(d: Date) {
-  const m = d.getMonth();
-  return m >= 3 && m <= 8;
-}
-
-export function seasonYearForAprilSeptember(d: Date): number | null {
-  if (!isDateInAprilSeptemberSeason(d)) return null;
-  return d.getFullYear();
-}
+export { isDateInAprilSeptemberSeason, seasonYearForAprilSeptember } from '@bleu-calanque/shared';
 
 export function countSeasonRedemptionsForClient(
   redemptions: readonly CouponRedemption[],
   couponId: string,
   clientKey: string,
   seasonYear: number,
+  before?: Date,
 ) {
   return redemptions.filter((r) => {
     if (r.couponId !== couponId || r.clientKey !== clientKey) return false;
     const dt = new Date(r.redeemedAt);
+    if (before && dt.getTime() >= before.getTime()) return false;
     return seasonYearForAprilSeptember(dt) === seasonYear;
   }).length;
 }
@@ -64,8 +65,9 @@ export type EffectiveCouponTier = 'full' | 'degraded';
 export function getEffectiveCouponDiscount(
   coupon: Coupon,
   clientKey: string,
-  redemptions: readonly CouponRedemption[],
+  allReservations: readonly CouponCountableReservation[],
   evaluationDate: Date = new Date(),
+  context?: CouponTierEvaluationContext,
 ): { discountKind: CouponDiscountKind; discountValue: number; tier: EffectiveCouponTier } {
   const full = {
     discountKind: coupon.discountKind,
@@ -75,7 +77,13 @@ export function getEffectiveCouponDiscount(
   if (!coupon.seasonRule) return full;
   const seasonY = seasonYearForAprilSeptember(evaluationDate);
   if (seasonY === null) return full;
-  const prior = countSeasonRedemptionsForClient(redemptions, coupon.id, clientKey.trim(), seasonY);
+  const prior = countPriorSeasonCountableCouponUses(
+    allReservations,
+    coupon.code,
+    couponClientFromKey(clientKey.trim()),
+    evaluationDate,
+    context,
+  );
   if (prior >= coupon.seasonRule.maxFullDiscountUsesPerClient) {
     return {
       discountKind: coupon.discountKind,

@@ -1,9 +1,14 @@
 import { Body, Controller, Get, HttpCode, Param, Post, Res } from '@nestjs/common';
 import type { Response } from 'express';
+import { Throttle } from '@nestjs/throttler';
 import { Public } from '../common/decorators/public.decorator';
 import { RentalContractsService } from './rental-contracts.service';
 
+/** 40 req/min/IP — pages publiques contrat (anti-énumération token). */
+const PUBLIC_CONTRACT_THROTTLE = { default: { limit: 40, ttl: 60_000 } };
+
 @Controller('public/rental-contracts')
+@Throttle(PUBLIC_CONTRACT_THROTTLE)
 export class PublicRentalContractsController {
   constructor(private readonly contracts: RentalContractsService) {}
 

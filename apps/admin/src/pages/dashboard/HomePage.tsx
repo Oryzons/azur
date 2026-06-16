@@ -128,7 +128,7 @@ export function HomePage() {
 
   return (
     <ContentReveal ready={coreReady} skeleton={<DashboardHomeSkeleton />}>
-      <div className="w-full space-y-8">
+      <div className="w-full space-y-8" data-tour="admin-dashboard-main">
         <header className="space-y-1">
           <p className="text-sm font-medium text-[#416B9F]">{greeting}</p>
           <h1 className="text-2xl font-bold tracking-tight text-zinc-900">Tableau de bord</h1>

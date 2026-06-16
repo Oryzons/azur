@@ -7,6 +7,8 @@ export const CALENDAR_BOAT_ROW_DRAG_MIME = 'application/x-bleu-calanque-calendar
 
 export const BOAT_COL_W = 220;
 export const ROW_H = 64;
+export const PILL_MIN_H = 28;
+export const PILL_LANE_GAP = 3;
 export const DAY_COL_W = 62;
 export const SLOT_COL_W = 22;
 
@@ -76,7 +78,8 @@ export function isSameDay(a: Date, b: Date) {
 export function assignLanes<T>(
   items: T[],
   getStart: (t: T) => number,
-  getEnd: (t: T) => number,
+  /** Fin exclusive (colonne / jour suivant non occupé). */
+  getEndExclusive: (t: T) => number,
 ): { lanes: number; laneByIndex: number[] } {
   const laneEnds: number[] = [];
   const laneByIndex: number[] = [];
@@ -84,14 +87,14 @@ export function assignLanes<T>(
     const item = items[i];
     if (!item) continue;
     const s = getStart(item);
-    const e = getEnd(item);
     let lane = 0;
     while (lane < laneEnds.length) {
       const laneEnd = laneEnds[lane];
       if (laneEnd === undefined) break;
-      if (s > laneEnd) break;
+      if (s >= laneEnd) break;
       lane++;
     }
+    const e = getEndExclusive(item);
     if (lane === laneEnds.length) laneEnds.push(e);
     else laneEnds[lane] = e;
     laneByIndex[i] = lane;
@@ -99,13 +102,33 @@ export function assignLanes<T>(
   return { lanes: laneEnds.length, laneByIndex };
 }
 
+/** Hauteur de ligne et hauteur de pillule selon le nombre de couloirs empilés. */
+export function planningRowMetrics(laneCount: number) {
+  const lanes = Math.max(1, laneCount);
+  const barH = Math.max(PILL_MIN_H, Math.floor((ROW_H - (lanes - 1) * PILL_LANE_GAP) / lanes));
+  const rowHeight = Math.max(ROW_H, lanes * barH + (lanes - 1) * PILL_LANE_GAP);
+  return { barH, rowHeight, laneCount: lanes };
+}
+
 export function segmentLabel(r: Reservation, mode: ViewMode) {
   const sameDay = startOfDay(r.start).getTime() === startOfDay(r.end).getTime();
   if (mode === 'month' || mode === 'week') {
-    if (sameDay) return `${r.title} · ${formatTime(r.start)}–${formatTime(r.end)}`;
+    if (sameDay) return r.title;
     return `${r.title} · ${formatTime(r.start)} → ${formatTime(r.end)}`;
   }
   return `${formatTime(r.start)}–${formatTime(r.end)} · ${r.title}`;
+}
+
+/** Libellé minimal pour l’espace propriétaire (date + horaires uniquement). */
+export function ownerSegmentLabel(r: Reservation, mode: ViewMode) {
+  const sameDay = startOfDay(r.start).getTime() === startOfDay(r.end).getTime();
+  if (mode === 'day') {
+    return `${formatTime(r.start)}–${formatTime(r.end)}`;
+  }
+  if (sameDay) return `${formatTime(r.start)}–${formatTime(r.end)}`;
+  const startDay = r.start.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' });
+  const endDay = r.end.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' });
+  return `${startDay} ${formatTime(r.start)} → ${endDay} ${formatTime(r.end)}`;
 }
 
 export function dayHeaderLabel(d: Date) {

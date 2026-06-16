@@ -4,9 +4,11 @@ export type CgvSection = {
   blocks: { type: 'p' | 'ul'; content: string | string[] }[];
 };
 
+import { DEFAULT_BRAND_NAME } from '@bleu-calanque/shared';
+
 /** Conditions générales Bleu Calanque (texte de référence). */
 export function buildDefaultCgvSections(companyName: string): CgvSection[] {
-  const co = companyName.trim() || 'Bleu Calanque';
+  const co = companyName.trim() || DEFAULT_BRAND_NAME;
 
   return [
     {

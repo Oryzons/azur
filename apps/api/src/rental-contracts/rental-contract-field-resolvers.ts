@@ -95,6 +95,19 @@ export function parseBoatDetailsJson(json: string | null): ParsedBoatDetails | n
         montantFranchise?: string;
         valeurAssuree?: string;
         locationCouverte?: boolean;
+        numero?: string;
+        organisme?: string;
+        dateFin?: string;
+      };
+      legalite?: {
+        assurance?: {
+          organisme?: string;
+          numero?: string;
+          montantFranchise?: string;
+          valeurAssuree?: string;
+          locationCouverte?: boolean;
+          dateFin?: string;
+        };
       };
     };
     const selected = raw.equipements?.selected ?? {};
@@ -126,9 +139,27 @@ export function parseBoatDetailsJson(json: string | null): ParsedBoatDetails | n
       armementLabel,
       authorizedNavigationZone: navZone,
       safetyEquipmentLabel: selectedEquipmentLabels(selected, SECURITE_LABELS, 'securite_'),
-      insuranceCompany: raw.assurance?.assureurActuel?.trim() || null,
-      insurancePolicyNumber: raw.assurance?.numeroContrat?.trim() || null,
-      assuranceSummary: formatBoatInsurance(raw.assurance ?? {}),
+      insuranceCompany:
+        raw.legalite?.assurance?.organisme?.trim() ||
+        raw.assurance?.assureurActuel?.trim() ||
+        raw.assurance?.organisme?.trim() ||
+        null,
+      insurancePolicyNumber:
+        raw.legalite?.assurance?.numero?.trim() ||
+        raw.assurance?.numeroContrat?.trim() ||
+        raw.assurance?.numero?.trim() ||
+        null,
+      assuranceSummary: formatBoatInsurance(
+        raw.legalite?.assurance
+          ? {
+              assureurActuel: raw.legalite.assurance.organisme,
+              numeroContrat: raw.legalite.assurance.numero,
+              montantFranchise: raw.legalite.assurance.montantFranchise,
+              valeurAssuree: raw.legalite.assurance.valeurAssuree,
+              locationCouverte: raw.legalite.assurance.locationCouverte,
+            }
+          : (raw.assurance ?? {}),
+      ),
     };
   } catch {
     return null;

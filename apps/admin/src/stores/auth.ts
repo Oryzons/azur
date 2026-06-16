@@ -21,6 +21,7 @@ export interface AuthUserSlice {
   ownerMemberId?: string | null;
   isActive: boolean;
   mustChangePassword?: boolean;
+  permComptabilite?: boolean;
 }
 
 interface AuthTokensPayload {

@@ -9,10 +9,12 @@ import {
 } from '@nestjs/common';
 import type { RawBodyRequest } from '@nestjs/common';
 import type { Request } from 'express';
+import { SkipThrottle } from '@nestjs/throttler';
 import { Public } from '../common/decorators/public.decorator';
 import { StripePaymentsService } from './stripe-payments.service';
 import { ReservationNotificationsService } from './reservation-notifications.service';
 
+@SkipThrottle()
 @Controller('webhooks/stripe')
 export class StripeWebhookController {
   private readonly logger = new Logger(StripeWebhookController.name);

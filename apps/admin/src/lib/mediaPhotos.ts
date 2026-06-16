@@ -17,7 +17,8 @@ export function coverPhotoUrl(urls: string[]): string | null {
 }
 
 export const MAX_PRESENTATION_PHOTOS = 8;
-export const MAX_PHOTO_BYTES = 1_500_000;
+/** Aligné sur STORED_IMAGE_MAX_BYTES (packages/shared). */
+export const MAX_PHOTO_BYTES = 1_572_864;
 
 function dataUrlByteLength(dataUrl: string): number {
   const comma = dataUrl.indexOf(',');

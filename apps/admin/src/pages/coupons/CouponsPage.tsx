@@ -2,12 +2,15 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   buildCouponUsageGroupsFromReservations,
   formatUsageDiscountBadge,
+  formatUsageTierBadges,
+  type CouponUsageGroup,
 } from '@/lib/couponUsageFromReservations';
 import { deserializeReservation } from '@/stores/reservations';
 import {
   Banknote,
   CalendarClock,
   CalendarRange,
+  ChevronDown,
   Percent,
   Plus,
   Search,
@@ -35,6 +38,7 @@ import {
   todayIso,
 } from '@/lib/couponUi';
 import { usePageFiltersPanel, type PageFiltersConfig } from '@/contexts/PageFiltersContext';
+import { usePersistedBoolean, usePersistedEnum, usePersistedString } from '@/lib/pageFilterStorage';
 import { couponRequiresAirbusBadge } from '@/lib/airbusCoupon';
 import { api } from '@/lib/api';
 import { useCouponsStore, type Coupon, type CouponDiscountKind, type CouponSeasonRule } from '@/stores/coupons';
@@ -192,6 +196,183 @@ function redemptionMatchesClientSearch(clientKey: string, member: Member | undef
   return nq.split(/\s+/).filter(Boolean).every((w) => hay.includes(w));
 }
 
+function formatCouponUsageWhen(iso: string): string {
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return iso;
+  return d.toLocaleString('fr-FR', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function couponClientInitials(member: Member | undefined, clientKey: string): string {
+  if (member) {
+    const first = member.firstName?.trim()[0] ?? '';
+    const last = member.lastName?.trim()[0] ?? '';
+    if (first || last) return `${first}${last}`.toUpperCase();
+  }
+  return clientKey.trim().slice(0, 2).toUpperCase() || '?';
+}
+
+function usageStatusPillClass(status: CouponUsageGroup['usages'][number]['status']): string {
+  if (status === 'reserved_paid') return 'bg-emerald-50 text-emerald-800 ring-emerald-200/80';
+  if (status === 'cancelled' || status === 'refunded' || status === 'partially_refunded') {
+    return 'bg-zinc-100 text-zinc-600 ring-zinc-200/80';
+  }
+  return 'bg-sky-50 text-sky-900 ring-sky-200/80';
+}
+
+function isCouponUsageUpcoming(startAt: string): boolean {
+  const start = new Date(startAt);
+  return Number.isFinite(start.getTime()) && start.getTime() > Date.now();
+}
+
+type CouponUsageGroupRowProps = Readonly<{
+  group: CouponUsageGroup;
+  member: Member | undefined;
+  coupon: Coupon;
+  expanded: boolean;
+  onToggleExpanded: () => void;
+  onDelete: () => void;
+}>;
+
+function CouponUsageGroupRow(props: CouponUsageGroupRowProps) {
+  const { group: g, member, coupon, expanded, onToggleExpanded, onDelete } = props;
+  const tierBadges = formatUsageTierBadges(coupon, g);
+  const discountLabel = formatUsageDiscountBadge(coupon, g.lastEffectivePercent);
+  const clientLabel = member ? `${member.firstName} ${member.lastName}` : g.clientKey;
+  const lastUseLabel = formatCouponUsageWhen(g.lastStartAt);
+
+  return (
+    <li className="overflow-hidden rounded-xl border border-zinc-200/90 bg-white shadow-sm">
+      <div className="flex gap-3 p-4">
+        <div
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#416B9F]/10 text-sm font-bold text-[#416B9F]"
+          aria-hidden
+        >
+          {couponClientInitials(member, g.clientKey)}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-zinc-900">{clientLabel}</p>
+              {member ? <p className="truncate text-xs text-zinc-500">{member.email}</p> : null}
+              {member?.role === 'client' && member.airbusBadge?.trim() ? (
+                <p className="mt-0.5 text-[11px] font-mono text-zinc-400">
+                  Badge {member.airbusBadge.trim().toUpperCase()}
+                </p>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              onClick={onDelete}
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-red-200/80 bg-red-50 text-red-600 transition hover:bg-red-100"
+              aria-label={`Supprimer les utilisations pour ${clientLabel}`}
+              title="Supprimer les utilisations de ce client"
+            >
+              <Trash2 className="h-4 w-4" strokeWidth={2} />
+            </button>
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-1.5">
+            <span className="inline-flex rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold tabular-nums text-emerald-800 ring-1 ring-emerald-200/70">
+              {discountLabel}
+            </span>
+            {tierBadges.fullLabel ? (
+              <span className="inline-flex rounded-full bg-sky-50 px-2.5 py-0.5 text-[11px] font-semibold tabular-nums text-sky-900 ring-1 ring-sky-200/70">
+                {tierBadges.fullLabel}
+              </span>
+            ) : null}
+            {tierBadges.degradedLabel ? (
+              <span className="inline-flex rounded-full bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold tabular-nums text-amber-900 ring-1 ring-amber-200/70">
+                {tierBadges.degradedLabel}
+              </span>
+            ) : null}
+            <span className="inline-flex rounded-full bg-zinc-100 px-2.5 py-0.5 text-[11px] font-semibold text-zinc-700 ring-1 ring-zinc-200/80">
+              {tierBadges.totalLabel}
+            </span>
+            <span className="hidden text-[11px] text-zinc-400 sm:inline">·</span>
+            <time className="text-[11px] text-zinc-400" dateTime={g.lastStartAt}>
+              Dernière : {lastUseLabel}
+            </time>
+          </div>
+
+          {g.outOfSeasonCount > 0 ? (
+            <p className="mt-2 text-[11px] text-zinc-400">
+              +{g.outOfSeasonCount} hors saison {g.seasonYear ?? ''} (non comptée)
+            </p>
+          ) : null}
+        </div>
+      </div>
+
+      {g.usages.length > 0 ? (
+        <div className="border-t border-zinc-100 bg-zinc-50/60 px-4 py-3">
+          <button
+            type="button"
+            onClick={onToggleExpanded}
+            className="flex w-full items-center justify-between gap-3 rounded-lg border border-zinc-200/80 bg-white px-3 py-2.5 text-left text-sm font-medium text-zinc-700 shadow-sm transition hover:border-[#416B9F]/30 hover:bg-[#416B9F]/5"
+            aria-expanded={expanded}
+          >
+            <span className="flex min-w-0 items-center gap-2">
+              <ChevronDown
+                className={`h-4 w-4 shrink-0 text-[#416B9F] transition-transform ${expanded ? 'rotate-180' : ''}`}
+                aria-hidden
+              />
+              <span className="whitespace-nowrap">
+                {expanded ? 'Masquer le détail' : 'Voir les utilisations'}
+              </span>
+            </span>
+            <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-zinc-600">
+              {g.usages.length}
+            </span>
+          </button>
+
+          {expanded ? (
+            <div className="mt-3 overflow-hidden rounded-lg border border-zinc-200/80 bg-white">
+              <div className="hidden grid-cols-[minmax(0,1fr)_auto_auto] gap-x-4 border-b border-zinc-100 bg-zinc-50 px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 sm:grid">
+                <span>Date</span>
+                <span>Statut</span>
+                <span className="text-right">Remise</span>
+              </div>
+              <ul className="divide-y divide-zinc-100">
+                {g.usages.map((u) => {
+                  const pct = u.percent != null ? `−${u.percent} %` : '—';
+                  return (
+                    <li
+                      key={u.reservationId}
+                      className="grid grid-cols-1 gap-2 px-3 py-2.5 text-sm sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center sm:gap-x-4 sm:gap-y-0"
+                    >
+                      <time className="font-medium text-zinc-800" dateTime={u.startAt}>
+                        {formatCouponUsageWhen(u.startAt)}
+                      </time>
+                      <div className="flex flex-wrap items-center gap-1">
+                        <span
+                          className={`inline-flex w-fit rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ${usageStatusPillClass(u.status)}`}
+                        >
+                          {u.statusLabel}
+                        </span>
+                        {isCouponUsageUpcoming(u.startAt) ? (
+                          <span className="inline-flex w-fit rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-semibold text-violet-800 ring-1 ring-violet-200/80">
+                            À venir
+                          </span>
+                        ) : null}
+                      </div>
+                      <span className="font-semibold tabular-nums text-zinc-900 sm:text-right">{pct}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
 export function CouponsPage() {
   const coupons = useCouponsStore((s) => s.coupons);
   const redemptions = useCouponsStore((s) => s.redemptions);
@@ -209,9 +390,13 @@ export function CouponsPage() {
   const members = useMembersStore((s) => s.members);
 
   const [selectedId, setSelectedId] = useState('');
-  const [search, setSearch] = useState('');
-  const [listFilter, setListFilter] = useState<ListFilter>('all');
-  const [hideDisabledCoupons, setHideDisabledCoupons] = useState(false);
+  const [search, setSearch] = usePersistedString('coupons.search');
+  const [listFilter, setListFilter] = usePersistedEnum<ListFilter>(
+    'coupons.listFilter',
+    'all',
+    ['all', 'active', 'disabled', 'out_of_range'],
+  );
+  const [hideDisabledCoupons, setHideDisabledCoupons] = usePersistedBoolean('coupons.hideDisabled', false);
   const [section, setSection] = useState<EditorSection>('general');
   const [formError, setFormError] = useState('');
   const [createDraft, setCreateDraft] = useState<CouponDraft>(emptyDraft);
@@ -222,11 +407,16 @@ export function CouponsPage() {
   const [exportingAirbus, setExportingAirbus] = useState(false);
   const [usageConfirmLoading, setUsageConfirmLoading] = useState(false);
   const [redemptionClientSearch, setRedemptionClientSearch] = useState('');
+  const [expandedUsageKeys, setExpandedUsageKeys] = useState<Set<string>>(() => new Set());
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!hydrated) void refresh();
   }, [hydrated, refresh]);
+
+  useEffect(() => {
+    setExpandedUsageKeys(new Set());
+  }, [selectedId]);
 
   const sorted = useMemo(() => {
     const rank = (c: Coupon) => {
@@ -906,72 +1096,37 @@ export function CouponsPage() {
                           Aucune réservation active avec ce coupon.
                         </p>
                       ) : (
-                        <ul className="divide-y divide-zinc-100 rounded-xl border border-zinc-200/90">
+                        <ul className="space-y-3">
                           {filteredUsageGroups.map((g) => {
                             const member = resolveMemberForCouponClientKey(g.clientKey, memberById, memberByEmailLower);
-                            const hasDegraded = g.degradedCount > 0;
-                            const when = new Date(g.lastStartAt);
-                            const dateLabel = Number.isFinite(when.getTime())
-                              ? when.toLocaleString('fr-FR', {
-                                  day: '2-digit',
-                                  month: 'short',
-                                  year: 'numeric',
-                                  hour: '2-digit',
-                                  minute: '2-digit',
-                                })
-                              : g.lastStartAt;
-                            const discountLabel = formatUsageDiscountBadge(selected, g.lastEffectivePercent);
                             return (
-                              <li
+                              <CouponUsageGroupRow
                                 key={g.key}
-                                className="flex flex-wrap items-start justify-between gap-3 px-4 py-3 sm:items-center"
-                              >
-                                <div className="min-w-0">
-                                  <p className="text-sm font-semibold text-zinc-900">
-                                    {member ? `${member.firstName} ${member.lastName}` : g.clientKey}
-                                  </p>
-                                  {member ? <p className="text-xs text-zinc-500">{member.email}</p> : null}
-                                  {member?.role === 'client' && member.airbusBadge?.trim() ? (
-                                    <p className="text-xs font-mono text-zinc-500">Badge {member.airbusBadge.trim().toUpperCase()}</p>
-                                  ) : null}
-                                </div>
-                                <div className="flex shrink-0 items-center gap-2">
-                                  <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold tabular-nums text-emerald-800">
-                                    {discountLabel}
-                                  </span>
-                                  {hasDegraded ? (
-                                    <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-900">
-                                      {g.degradedCount}× 20 %
-                                    </span>
-                                  ) : null}
-                                  <span className="rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-semibold tabular-nums text-zinc-700">
-                                    ×{g.count}
-                                  </span>
-                                  <time className="text-xs text-zinc-400" dateTime={g.lastStartAt}>
-                                    {dateLabel}
-                                  </time>
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      setUsageConfirm({
-                                        kind: 'client',
-                                        couponId: selected.id,
-                                        clientKey: g.clientKey,
-                                        clientLabel: member
-                                          ? `${member.firstName} ${member.lastName}`
-                                          : g.clientKey,
-                                        count: g.count,
-                                        couponCode: selected.code,
-                                      })
-                                    }
-                                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-red-200/80 bg-red-50 text-red-600 transition hover:bg-red-100"
-                                    aria-label={`Supprimer les utilisations pour ${member ? `${member.firstName} ${member.lastName}` : g.clientKey}`}
-                                    title="Supprimer les utilisations de ce client"
-                                  >
-                                    <Trash2 className="h-4 w-4" strokeWidth={2} />
-                                  </button>
-                                </div>
-                              </li>
+                                group={g}
+                                member={member}
+                                coupon={selected}
+                                expanded={expandedUsageKeys.has(g.key)}
+                                onToggleExpanded={() =>
+                                  setExpandedUsageKeys((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(g.key)) next.delete(g.key);
+                                    else next.add(g.key);
+                                    return next;
+                                  })
+                                }
+                                onDelete={() =>
+                                  setUsageConfirm({
+                                    kind: 'client',
+                                    couponId: selected.id,
+                                    clientKey: g.clientKey,
+                                    clientLabel: member
+                                      ? `${member.firstName} ${member.lastName}`
+                                      : g.clientKey,
+                                    count: g.count,
+                                    couponCode: selected.code,
+                                  })
+                                }
+                              />
                             );
                           })}
                         </ul>

@@ -1,3 +1,5 @@
+import type { CheckFlowGuideKind } from '@/lib/checkFlowPhotoGuide';
+import { CheckFlowCameraOverlay } from '@/components/tablet/CheckFlowGuideIllustration';
 import { useEffect, useRef, useState } from 'react';
 import { Camera, X } from 'lucide-react';
 import { TB } from '@/lib/tabletTheme';
@@ -5,10 +7,12 @@ import { TB } from '@/lib/tabletTheme';
 type Props = Readonly<{
   onPhoto: (file: File) => void;
   disabled?: boolean;
+  guideKind?: CheckFlowGuideKind;
+  cameraHint?: string;
 }>;
 
 /** Prise de vue directe (caméra) — pas de sélection galerie. */
-export function TabletPhotoCapture({ onPhoto, disabled }: Props) {
+export function TabletPhotoCapture({ onPhoto, disabled, guideKind, cameraHint }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [open, setOpen] = useState(false);
@@ -78,12 +82,15 @@ export function TabletPhotoCapture({ onPhoto, disabled }: Props) {
   if (open) {
     return (
       <div className="fixed inset-0 z-50 flex flex-col bg-zinc-900">
-        <div className="flex items-center justify-between px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))] text-white">
-          <span className="text-sm font-semibold">Prendre une photo</span>
+        <div className="flex items-center justify-between gap-3 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))] text-white">
+          <div className="min-w-0">
+            <span className="block text-sm font-semibold">Prendre une photo</span>
+            {cameraHint ? <span className="mt-0.5 block truncate text-xs text-white/75">{cameraHint}</span> : null}
+          </div>
           <button
             type="button"
             onClick={closeCamera}
-            className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10"
             aria-label="Fermer"
           >
             <X className="h-5 w-5" />
@@ -91,6 +98,13 @@ export function TabletPhotoCapture({ onPhoto, disabled }: Props) {
         </div>
         <div className="relative min-h-0 flex-1 bg-black">
           <video ref={videoRef} playsInline muted className="h-full w-full object-cover" />
+          {guideKind ? <CheckFlowCameraOverlay kind={guideKind} /> : null}
+          <div className="pointer-events-none absolute inset-8 rounded-2xl border-2 border-dashed border-white/70 cf-guide-pulse" />
+          <div className="pointer-events-none absolute inset-x-0 bottom-4 flex justify-center">
+            <span className="rounded-full bg-black/55 px-3 py-1 text-xs font-medium text-white/90">
+              Cadrez l’élément dans le rectangle
+            </span>
+          </div>
         </div>
         <div className="flex gap-3 border-t border-white/10 bg-zinc-900 p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
           <button type="button" onClick={closeCamera} className={`flex-1 ${TB.btnSecondary} !text-zinc-800`}>
@@ -111,7 +125,7 @@ export function TabletPhotoCapture({ onPhoto, disabled }: Props) {
         disabled={disabled}
         onClick={() => void openCamera()}
         className={[
-          'flex w-full min-h-[3.5rem] items-center justify-center gap-2 rounded-2xl border border-dashed border-[#416B9F]/40 bg-[#416B9F]/5 py-6 text-sm font-semibold text-[#416B9F] touch-manipulation',
+          'flex w-full min-h-[4rem] items-center justify-center gap-2 rounded-2xl bg-gradient-to-br from-sky-600 to-sky-800 py-6 text-base font-bold text-white shadow-lg shadow-sky-900/25 touch-manipulation',
           disabled ? 'opacity-50' : 'active:scale-[0.98]',
         ].join(' ')}
       >

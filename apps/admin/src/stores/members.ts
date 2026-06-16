@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { api } from '@/lib/api';
 
-export type MemberRole = 'admin' | 'agent' | 'proprietaire' | 'client';
+export type MemberRole = 'admin' | 'agent' | 'proprietaire' | 'client' | 'daf';
 
 export type MemberBase = {
   id: string;
@@ -20,6 +20,7 @@ export type MemberAdmin = MemberBase & {
     manageMembers: boolean;
     manageBoats: boolean;
     manageReservations: boolean;
+    comptabilite: boolean;
   };
 };
 
@@ -64,7 +65,11 @@ export type MemberClient = MemberBase & {
   airbusBadgePhotoUrl?: string | null;
 };
 
-export type Member = MemberAdmin | MemberAgent | MemberOwner | MemberClient;
+export type MemberDaf = MemberBase & {
+  role: 'daf';
+};
+
+export type Member = MemberAdmin | MemberAgent | MemberOwner | MemberClient | MemberDaf;
 
 export type AddMemberPayload = Omit<Member, 'id' | 'createdAt'>;
 export type UpdateMemberPayload = Omit<Member, 'createdAt'>;
@@ -155,6 +160,9 @@ export const useMembersStore = create<MembersState>()((set, get) => ({
       set((s) => ({ members: s.members.map((x) => (x.id === m.id ? real : x)) }));
       return { ok: true };
     } catch (e: any) {
+      set((s) => ({
+        members: s.members.map((x) => (x.id === m.id ? prev : x)),
+      }));
       return { ok: false, error: extractApiError(e, 'Impossible de modifier le membre.') };
     }
   },
@@ -176,16 +184,18 @@ function extractApiError(e: any, fallback: string): string {
   return fallback;
 }
 
-function roleToApi(r: MemberRole): 'ADMIN' | 'AGENT' | 'OWNER' | 'CLIENT' {
+function roleToApi(r: MemberRole): 'ADMIN' | 'AGENT' | 'OWNER' | 'CLIENT' | 'DAF' {
   if (r === 'admin') return 'ADMIN';
   if (r === 'agent') return 'AGENT';
   if (r === 'proprietaire') return 'OWNER';
+  if (r === 'daf') return 'DAF';
   return 'CLIENT';
 }
 function roleFromApi(r: string): MemberRole {
   if (r === 'ADMIN') return 'admin';
   if (r === 'AGENT') return 'agent';
   if (r === 'OWNER') return 'proprietaire';
+  if (r === 'DAF') return 'daf';
   return 'client';
 }
 function clientTypeToApi(t: ClientType | null | undefined): 'PARTICULIER' | 'PROFESSIONNEL' | 'ASSOCIATION' | null {
@@ -239,6 +249,8 @@ function memberToApiPayload(m: any) {
     base.postalCode = m.postalCode ?? null;
     base.country = m.country ?? null;
     base.internalNote = m.internalNote ?? null;
+    base.clientIdNumber = m.clientIdNumber?.trim() || null;
+    base.licenseNumber = m.licenseNumber?.trim() || null;
     base.cniFrontUrl = m.cniFrontUrl ?? null;
     base.cniBackUrl = m.cniBackUrl ?? null;
     base.boatLicenseFrontUrl = m.boatLicenseFrontUrl ?? null;
@@ -251,6 +263,7 @@ function memberToApiPayload(m: any) {
     base.permManageMembers = Boolean(p.manageMembers);
     base.permManageBoats = Boolean(p.manageBoats);
     base.permManageReservations = Boolean(p.manageReservations);
+    base.permComptabilite = Boolean(p.comptabilite);
   }
   if (m.role === 'agent') {
     base.permManageMembers = false;
@@ -305,13 +318,28 @@ function mapMemberFromApi(x: any): Member {
       airbusBadgePhotoUrl: x?.airbusBadgePhotoUrl ?? null,
     };
   }
+  if (role === 'daf') {
+    return { ...base, role: 'daf' };
+  }
+  if (role === 'admin') {
+    return {
+      ...base,
+      role: 'admin',
+      permissions: {
+        manageMembers: Boolean(x?.permManageMembers ?? false),
+        manageBoats: Boolean(x?.permManageBoats ?? false),
+        manageReservations: Boolean(x?.permManageReservations ?? false),
+        comptabilite: Boolean(x?.permComptabilite ?? false),
+      },
+    };
+  }
   return {
     ...base,
-    role,
+    role: 'agent',
     permissions: {
       manageMembers: Boolean(x?.permManageMembers ?? false),
       manageBoats: Boolean(x?.permManageBoats ?? false),
       manageReservations: Boolean(x?.permManageReservations ?? false),
     },
-  } as MemberAdmin | MemberAgent;
+  };
 }

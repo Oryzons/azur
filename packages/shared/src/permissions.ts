@@ -16,8 +16,14 @@ export const TABLET_AGENT_OR_ADMIN = [
   UserRole.MANAGER,
 ] as const;
 
-/** Lecture calendrier / réservations (agents + bureau + propriétaires). */
-export const RESERVATIONS_READ_ROLES = [...DESK_ROLES, UserRole.AGENT, UserRole.OWNER] as const;
+/** Module comptabilité (DAF uniquement). */
+export const COMPTABILITE_ROLES = [UserRole.DAF] as const;
+
+/** Lecture calendrier / réservations (agents + bureau + propriétaires + DAF pour reporting). */
+export const RESERVATIONS_READ_ROLES = [...DESK_ROLES, UserRole.AGENT, UserRole.OWNER, UserRole.DAF] as const;
+
+/** Lecture catalogue nécessaire au reporting financier. */
+export const COMPTABILITE_OR_DESK_ROLES = [...DESK_ROLES, UserRole.DAF] as const;
 
 /** Calendrier, indisponibilités et réservations (propriétaires). */
 export const OWNER_PORTAL_ROLES = [UserRole.OWNER] as const;
@@ -37,8 +43,16 @@ export function isTabletAgentRole(role: string): boolean {
   return role === UserRole.AGENT;
 }
 
+export function isDafRole(role: string): boolean {
+  return role === UserRole.DAF;
+}
+
 export function canAccessDeskApi(role: string): boolean {
   return isDeskRole(role);
+}
+
+export function canAccessComptabiliteApi(role: string, permComptabilite?: boolean): boolean {
+  return isDafRole(role) || Boolean(permComptabilite);
 }
 
 export function canAccessOwnerPortal(role: string): boolean {

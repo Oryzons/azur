@@ -14,6 +14,13 @@ export type ClamAvConfig = {
   binary: string;
 };
 
+export class ClamAvUnavailableError extends Error {
+  constructor(message = 'Scan antivirus indisponible.') {
+    super(message);
+    this.name = 'ClamAvUnavailableError';
+  }
+}
+
 export async function scanBufferWithClamAv(buffer: Buffer, config: ClamAvConfig): Promise<void> {
   if (!config.enabled) return;
 
@@ -32,7 +39,8 @@ export async function scanBufferWithClamAv(buffer: Buffer, config: ClamAvConfig)
     if (err instanceof Error && err.message === 'Malware detected') {
       throw err;
     }
-    log.warn(`Scan antivirus indisponible (${config.binary}) — fichier accepté sans scan.`);
+    log.error(`Scan antivirus indisponible (${config.binary}) — fichier rejeté.`);
+    throw new ClamAvUnavailableError();
   } finally {
     await unlink(tmpPath).catch(() => undefined);
   }

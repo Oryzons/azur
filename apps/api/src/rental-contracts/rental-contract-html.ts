@@ -90,6 +90,7 @@ export type RentalContractViewModel = {
   pricingLines: PricingLine[];
   pricingTotal: PricingLine;
   payments: PaymentLine[];
+  paymentObligations: { label: string; methodLabel: string; amount: string; paid: boolean }[];
   balanceDue: string;
   clientSignatureImg?: string | null;
   operatorSignatureImg?: string | null;
@@ -210,7 +211,7 @@ function moneyTable(
 
 function sigBlock(img: string | null | undefined, label: string, signedAt?: string | null) {
   const inner = img
-    ? `<img src="${img}" alt="" class="sig-img"/>`
+    ? `<img src="${esc(img)}" alt="" class="sig-img"/>`
     : '';
   const signedLine = signedAt
     ? `<p class="sig-date">Signé le ${esc(signedAt)}</p>`
@@ -573,6 +574,46 @@ const PAGE_STYLE = `
   body.draft .page { position: relative; z-index: 1; }
 `;
 
+function paymentDateForObligation(
+  vm: RentalContractViewModel,
+  obligation: RentalContractViewModel['paymentObligations'][number],
+  obligationIndex: number,
+): string {
+  if (!obligation.paid) return '—';
+  if (obligation.label === 'Avoir client') {
+    return vm.payments.find((p) => p.method === 'Avoir client')?.date ?? '—';
+  }
+  const cardPayments = vm.payments.filter((p) => p.method !== 'Avoir client');
+  const cardObligations = vm.paymentObligations.filter((o) => o.label !== 'Avoir client');
+  const cardIdx = cardObligations.indexOf(obligation);
+  if (cardIdx >= 0 && cardPayments[cardIdx]) return cardPayments[cardIdx].date;
+  return vm.payments[obligationIndex]?.date ?? '—';
+}
+
+function paymentMethodLabelForObligation(
+  obligation: RentalContractViewModel['paymentObligations'][number],
+): string {
+  if (obligation.label === 'Paiement') return obligation.methodLabel;
+  return `${obligation.label} — ${obligation.methodLabel}`;
+}
+
+function buildContractPaymentRows(vm: RentalContractViewModel): string[][] {
+  if (vm.paymentObligations.length > 0) {
+    return vm.paymentObligations.map((obligation, index) => {
+      const date = paymentDateForObligation(vm, obligation, index);
+      const method = paymentMethodLabelForObligation(obligation);
+      const amount = obligation.paid
+        ? `<strong>${esc(obligation.amount)}</strong>`
+        : `${esc(obligation.amount)} <span class="empty">(à régler)</span>`;
+      return [esc(date), esc(method), amount];
+    });
+  }
+  if (vm.payments.length > 0) {
+    return vm.payments.map((p) => [esc(p.date), esc(p.method), `<strong>${esc(p.amount)}</strong>`]);
+  }
+  return [['—', '—', '—']];
+}
+
 export function buildRentalContractHtml(
   vm: RentalContractViewModel,
   options?: RentalContractRenderOptions,
@@ -608,10 +649,7 @@ export function buildRentalContractHtml(
     ],
   );
 
-  const paymentBody =
-    vm.payments.length > 0
-      ? vm.payments.map((p) => [esc(p.date), esc(p.method), `<strong>${esc(p.amount)}</strong>`])
-      : [['—', '—', '—']];
+  const paymentBody = buildContractPaymentRows(vm);
 
   const paymentsTable = moneyTable(
     [

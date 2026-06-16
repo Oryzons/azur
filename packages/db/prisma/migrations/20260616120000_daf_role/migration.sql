@@ -1,0 +1,2 @@
+-- Rôle DAF (comptabilité) — enums stockés en TEXT sous SQLite.
+-- Aucune modification de schéma relationnel requise.

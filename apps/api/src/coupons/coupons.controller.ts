@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
-import { DeskOnly } from '../common/decorators/role-groups.decorator';
+import { ComptabiliteOrDesk, DeskOnly } from '../common/decorators/role-groups.decorator';
 import { CouponsAirbusExportService } from './coupons-airbus-export.service';
 import { CouponsService } from './coupons.service';
 import {
@@ -11,7 +11,6 @@ import {
 } from './coupons.dto';
 
 @Controller()
-@DeskOnly()
 export class CouponsController {
   constructor(
     private readonly coupons: CouponsService,
@@ -19,12 +18,14 @@ export class CouponsController {
   ) {}
 
   @Get('coupon-redemptions')
+  @DeskOnly()
   listRedemptions() {
     return this.coupons.listRedemptions();
   }
 
   /** Suppression par client (chemin plat — évite conflit avec DELETE coupons/:id). */
   @Delete('coupon-redemptions/by-client')
+  @DeskOnly()
   removeRedemptionsForClientByQuery(
     @Query('couponId', ParseUUIDPipe) couponId: string,
     @Query('clientKey') clientKey: string,
@@ -33,36 +34,43 @@ export class CouponsController {
   }
 
   @Post('coupon-redemptions/remove-by-client')
+  @DeskOnly()
   removeRedemptionsForClientByBody(@Body() body: RemoveClientRedemptionsDto) {
     return this.coupons.removeRedemptionsForClient(body.couponId, { clientKey: body.clientKey });
   }
 
   @Delete('coupon-redemptions')
+  @DeskOnly()
   clearRedemptions() {
     return this.coupons.clearRedemptions();
   }
 
   @Get('coupons')
+  @ComptabiliteOrDesk()
   listCoupons() {
     return this.coupons.list();
   }
 
   @Post('coupons')
+  @DeskOnly()
   createCoupon(@Body() body: CreateCouponDto) {
     return this.coupons.create(body);
   }
 
   @Patch('coupons/:id')
+  @DeskOnly()
   updateCoupon(@Param('id', ParseUUIDPipe) id: string, @Body() body: UpdateCouponDto) {
     return this.coupons.update(id, body);
   }
 
   @Post('coupons/:id/sync-redemptions')
+  @DeskOnly()
   syncRedemptionsFromReservations(@Param('id', ParseUUIDPipe) id: string) {
     return this.coupons.syncRedemptionsFromReservations(id);
   }
 
   @Get('coupons/:id/export/airbus-registrations')
+  @DeskOnly()
   async exportAirbusRegistrations(@Param('id', ParseUUIDPipe) id: string, @Res() res: Response) {
     await this.coupons.syncRedemptionsFromReservations(id);
     const { csv, filename } = await this.airbusExport.buildCsv(id);
@@ -72,12 +80,14 @@ export class CouponsController {
   }
 
   @Post('coupons/:id/redemptions')
+  @DeskOnly()
   createRedemption(@Param('id', ParseUUIDPipe) id: string, @Body() body: CreateRedemptionDto) {
     return this.coupons.createRedemption(id, body);
   }
 
   /** Routes imbriquées avant DELETE coupons/:id (ordre Nest). */
   @Delete('coupons/:id/redemptions')
+  @DeskOnly()
   removeRedemptionsForClientNested(
     @Param('id', ParseUUIDPipe) id: string,
     @Query('clientKey') clientKey: string,
@@ -86,6 +96,7 @@ export class CouponsController {
   }
 
   @Delete('coupons/:id')
+  @DeskOnly()
   removeCoupon(@Param('id', ParseUUIDPipe) id: string) {
     return this.coupons.remove(id);
   }

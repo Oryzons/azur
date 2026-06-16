@@ -1,3 +1,5 @@
+import { isSkipperExtra } from './payment-installments';
+
 export type ExtraPriceKindInput = 'EURO' | 'PERCENT' | 'euro' | 'percent';
 export type ExtraBillingUnitInput =
   | 'LOCATION'
@@ -15,6 +17,14 @@ export type ExtraLineForPricing = {
     billingUnit: ExtraBillingUnitInput;
   };
 };
+
+/** Libellé d'un extra sur contrat / facture (indique le règlement hors ligne). */
+export function extraDocumentLabel(name: string, paymentChannel: string | null | undefined): string {
+  const trimmed = name.trim();
+  if (!trimmed) return trimmed;
+  const offline = String(paymentChannel ?? '').toUpperCase() === 'OFFLINE';
+  return offline ? `${trimmed} (hors ligne)` : trimmed;
+}
 
 /** Nombre de jours de location (aligné sur l’admin : créneau min. 1 jour). */
 export function rentalDaysBetween(startAt: Date, endAt: Date): number {
@@ -53,6 +63,16 @@ export function computeExtrasTotalCents(
 }
 
 /** Montant TTC d’une seule ligne extra (centimes). */
+/** Extra payé directement au prestataire (ex. skipper hors ligne) — hors CA base. */
+export function isThirdPartyOfflineExtra(input: {
+  name?: string | null;
+  icon?: string | null;
+  paymentChannel?: string | null;
+}): boolean {
+  const ch = String(input.paymentChannel ?? '').toLowerCase();
+  return ch === 'offline' && isSkipperExtra(input);
+}
+
 export function computeExtraLineCents(
   rentalCents: number,
   line: ExtraLineForPricing,

@@ -6,6 +6,7 @@ export type ReservationLockContext = {
   status?: string | null;
   /** Statut admin (`reserved_paid`, …). */
   adminStatus?: string | null;
+  cancelledAt?: Date | string | null;
   checkInDone: boolean;
   checkOutDone: boolean;
 };
@@ -43,11 +44,16 @@ export function isReservationLocked(ctx: ReservationLockContext): boolean {
 
 export function getReservationLockMessage(ctx: ReservationLockContext): string | null {
   const status = ctx.adminStatus ?? ctx.status;
+  const cancelled = Boolean(ctx.cancelledAt);
   if (status === 'refunded' || status === 'REFUNDED') {
-    return 'Location remboursée — modification encore possible.';
+    return cancelled
+      ? 'Réservation annulée et remboursée — modification encore possible.'
+      : 'Location remboursée — modification encore possible.';
   }
   if (status === 'partially_refunded' || status === 'PARTIALLY_REFUNDED') {
-    return 'Remboursement partiel enregistré — modification encore possible.';
+    return cancelled
+      ? 'Réservation annulée — remboursement partiel enregistré.'
+      : 'Remboursement partiel enregistré — modification encore possible.';
   }
   if (isReservationLocked(ctx)) {
     return 'Location terminée, payée, check-in et check-out effectués — modification bloquée.';

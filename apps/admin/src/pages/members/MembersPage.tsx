@@ -11,6 +11,7 @@ import {
   Upload,
   User,
   Users,
+  X,
 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { RoundCheckbox } from '@/components/RoundCheckbox';
@@ -28,7 +29,6 @@ import {
   birthDateFromIso,
   birthDateToIso,
   extractApiErrorMessage,
-  fileToDataUrl,
   formatBirthDateInput,
   inputCls,
   memberSearchHaystack,
@@ -36,9 +36,11 @@ import {
   ROLE_STYLES,
   todayIso,
 } from '@/lib/memberUi';
+import { documentUploadErrorMessage, fileToUploadDataUrl } from '@/lib/documentUpload';
 import { formatPhoneInput } from '@/lib/phone';
 import { api } from '@/lib/api';
 import { usePageFiltersPanel, type PageFiltersConfig } from '@/contexts/PageFiltersContext';
+import { usePersistedEnum, usePersistedString } from '@/lib/pageFilterStorage';
 import { useAuthStore } from '@/stores/auth';
 import { useBoatsStore } from '@/stores/boats';
 import {
@@ -77,6 +79,7 @@ type MemberDraft = {
   cniBackUrl: string;
   boatLicenseFrontUrl: string;
   boatLicenseBackUrl: string;
+  airbusBadge: string;
   airbusBadgePhotoUrl: string;
   company: string;
   iban: string;
@@ -85,6 +88,7 @@ type MemberDraft = {
   pManageMembers: boolean;
   pManageBoats: boolean;
   pManageReservations: boolean;
+  pComptabilite: boolean;
   adminPassword: string;
 };
 
@@ -109,6 +113,7 @@ function emptyDraft(role: MemberRole = 'client'): MemberDraft {
     cniBackUrl: '',
     boatLicenseFrontUrl: '',
     boatLicenseBackUrl: '',
+    airbusBadge: '',
     airbusBadgePhotoUrl: '',
     company: '',
     iban: '',
@@ -117,6 +122,7 @@ function emptyDraft(role: MemberRole = 'client'): MemberDraft {
     pManageMembers: true,
     pManageBoats: true,
     pManageReservations: true,
+    pComptabilite: false,
     adminPassword: '',
   };
 }
@@ -170,6 +176,7 @@ function memberToDraft(m: Member): MemberDraft {
     base.cniBackUrl = m.cniBackUrl ?? '';
     base.boatLicenseFrontUrl = m.boatLicenseFrontUrl ?? '';
     base.boatLicenseBackUrl = m.boatLicenseBackUrl ?? '';
+    base.airbusBadge = m.airbusBadge?.trim() ? m.airbusBadge.trim().toUpperCase() : '';
     base.airbusBadgePhotoUrl = m.airbusBadgePhotoUrl ?? '';
   }
   if (m.role === 'proprietaire') {
@@ -182,6 +189,7 @@ function memberToDraft(m: Member): MemberDraft {
     base.pManageMembers = Boolean(m.permissions.manageMembers);
     base.pManageBoats = Boolean(m.permissions.manageBoats);
     base.pManageReservations = Boolean(m.permissions.manageReservations);
+    base.pComptabilite = Boolean(m.permissions.comptabilite);
   }
   return base;
 }
@@ -213,6 +221,7 @@ function buildPayloadFromDraft(d: MemberDraft) {
       cniBackUrl: d.cniBackUrl.trim() || null,
       boatLicenseFrontUrl: d.boatLicenseFrontUrl.trim() || null,
       boatLicenseBackUrl: d.boatLicenseBackUrl.trim() || null,
+      airbusBadge: d.airbusBadge.trim() ? d.airbusBadge.trim().replaceAll(/\s+/g, '').toUpperCase() : null,
       airbusBadgePhotoUrl: d.airbusBadgePhotoUrl.trim() || null,
     };
   }
@@ -234,8 +243,12 @@ function buildPayloadFromDraft(d: MemberDraft) {
         manageMembers: d.pManageMembers,
         manageBoats: d.pManageBoats,
         manageReservations: d.pManageReservations,
+        comptabilite: d.pComptabilite,
       },
     };
+  }
+  if (d.role === 'daf') {
+    return { ...base, role: 'daf' as const };
   }
   return {
     ...base,
@@ -255,7 +268,7 @@ function FieldLabel({ children }: Readonly<{ children: React.ReactNode }>) {
 function sectionsForRole(role: MemberRole, isCreating: boolean): { id: EditorSection; label: string; Icon: typeof User }[] {
   const tabs: { id: EditorSection; label: string; Icon: typeof User }[] = [
     { id: 'identity', label: 'Identité', Icon: User },
-    { id: 'profile', label: role === 'client' ? 'Client' : role === 'proprietaire' ? 'Propriétaire' : role === 'admin' ? 'Permissions' : 'Agent', Icon: Shield },
+    { id: 'profile', label: role === 'client' ? 'Client' : role === 'proprietaire' ? 'Propriétaire' : role === 'admin' ? 'Permissions' : role === 'daf' ? 'Comptabilité' : 'Agent', Icon: Shield },
   ];
   if (role === 'client') {
     tabs.push({ id: 'documents', label: 'Pièces', Icon: IdCard });
@@ -279,7 +292,7 @@ function MembersFiltersSheetBody(props: Readonly<{
       <div>
         <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Rôle</p>
         <div className="mt-2 flex flex-wrap gap-2">
-          {(['all', 'admin', 'agent', 'proprietaire', 'client'] as const).map((k) => (
+          {(['all', 'admin', 'agent', 'daf', 'proprietaire', 'client'] as const).map((k) => (
             <button
               key={k}
               type="button"
@@ -352,9 +365,17 @@ export function MembersPage() {
   const refreshBoats = useBoatsStore((s) => s.refresh);
 
   const [selectedId, setSelectedId] = useState('');
-  const [search, setSearch] = useState('');
-  const [roleFilter, setRoleFilter] = useState<RoleFilter>('all');
-  const [activeFilter, setActiveFilter] = useState<ActiveFilter>('all');
+  const [search, setSearch] = usePersistedString('members.search');
+  const [roleFilter, setRoleFilter] = usePersistedEnum<RoleFilter>(
+    'members.roleFilter',
+    'all',
+    ['all', 'admin', 'agent', 'daf', 'proprietaire', 'client'],
+  );
+  const [activeFilter, setActiveFilter] = usePersistedEnum<ActiveFilter>(
+    'members.activeFilter',
+    'all',
+    ['all', 'active', 'inactive'],
+  );
   const [section, setSection] = useState<EditorSection>('identity');
   const [formError, setFormError] = useState('');
   const [success, setSuccess] = useState('');
@@ -392,7 +413,7 @@ export function MembersPage() {
       phone: authUser?.phone ?? null,
       isActive: Boolean(authUser?.isActive ?? true),
       createdAt: new Date().toISOString(),
-      permissions: { manageMembers: true, manageBoats: true, manageReservations: true },
+      permissions: { manageMembers: true, manageBoats: true, manageReservations: true, comptabilite: false },
     };
     return [pseudo, ...members];
   }, [authUser, currentUserDisplayId, currentUserEmail, members]);
@@ -451,7 +472,7 @@ export function MembersPage() {
   }, [boats]);
 
   const counts = useMemo(() => {
-    const c: Record<string, number> = { all: membersForDisplay.length, admin: 0, agent: 0, proprietaire: 0, client: 0 };
+    const c: Record<string, number> = { all: membersForDisplay.length, admin: 0, agent: 0, daf: 0, proprietaire: 0, client: 0 };
     for (const m of membersForDisplay) c[m.role] += 1;
     return c as Record<'all' | MemberRole, number>;
   }, [membersForDisplay]);
@@ -467,6 +488,12 @@ export function MembersPage() {
 
   const membersFiltersActiveCount =
     (roleFilter === 'all' ? 0 : 1) + (activeFilter === 'all' ? 0 : 1) + (search.trim() ? 1 : 0);
+
+  function resetMembersFilters() {
+    setRoleFilter('all');
+    setActiveFilter('all');
+    setSearch('');
+  }
 
   const membersFiltersPanel = useMemo(
     () => (
@@ -546,7 +573,21 @@ export function MembersPage() {
     if (!selected || readOnly) return;
     setFormError('');
     const res = await updateMember({ ...selected, ...patch } as UpdateMemberPayload);
-    if (!res.ok) setFormError(res.error);
+    if (!res.ok) {
+      setFormError(res.error);
+      return;
+    }
+    if (currentUserEmail && selected.email.trim().toLowerCase() === currentUserEmail.toLowerCase()) {
+      try {
+        const { data } = await api.get('/auth/me');
+        const { accessToken, refreshToken } = useAuthStore.getState();
+        if (accessToken && refreshToken) {
+          useAuthStore.getState().setSession({ accessToken, refreshToken, user: data });
+        }
+      } catch {
+        /* ignore */
+      }
+    }
   }
 
   async function handleCreate() {
@@ -629,7 +670,7 @@ export function MembersPage() {
     if (create !== '1') return;
     const roleParam = searchParams.get('role');
     const role: MemberRole =
-      roleParam === 'proprietaire' || roleParam === 'client' || roleParam === 'admin' || roleParam === 'agent'
+      roleParam === 'proprietaire' || roleParam === 'client' || roleParam === 'admin' || roleParam === 'agent' || roleParam === 'daf'
         ? roleParam
         : 'client';
     const draft = emptyDraft(role);
@@ -844,6 +885,23 @@ export function MembersPage() {
               className={inputCls()}
             />
           </label>
+          <label className="block sm:col-span-2">
+            <FieldLabel>N° badge Airbus</FieldLabel>
+            <input
+              value={data.airbusBadge}
+              disabled={disabled}
+              onChange={(e) =>
+                onChange({ airbusBadge: e.target.value.toUpperCase().replaceAll(/\s+/g, '') })
+              }
+              className={`${inputCls()} font-mono`}
+              placeholder="Ex. A345678"
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <p className="mt-1 text-[11px] text-zinc-500">
+              Numéro texte pour les coupons partenaire Airbus. La photo du badge se joint ci-dessous.
+            </p>
+          </label>
         </div>
       );
     }
@@ -921,6 +979,12 @@ export function MembersPage() {
             { label: 'Gérer les membres', v: data.pManageMembers, k: 'pManageMembers' as const },
             { label: 'Gérer les bateaux', v: data.pManageBoats, k: 'pManageBoats' as const },
             { label: 'Gérer les réservations', v: data.pManageReservations, k: 'pManageReservations' as const },
+            {
+              label: 'Accès comptabilité (DAF)',
+              v: data.pComptabilite,
+              k: 'pComptabilite' as const,
+              hint: 'Menu Comptabilité : rapports financiers et encaissements Stripe.',
+            },
           ].map((p) => (
             <RoundCheckbox
               key={p.k}
@@ -932,6 +996,14 @@ export function MembersPage() {
             />
           ))}
         </div>
+      );
+    }
+    if (data.role === 'daf') {
+      return (
+        <p className="text-sm text-zinc-600">
+          Accès au module <strong>Comptabilité</strong> (rapports financiers, encaissements Stripe). Aucun autre menu
+          back-office.
+        </p>
       );
     }
     return (
@@ -966,7 +1038,10 @@ export function MembersPage() {
               onChange={(e) => {
                 const f = e.target.files?.[0];
                 if (!f) return;
-                void fileToDataUrl(f).then((url) => onChange({ [s.key]: url }));
+                void fileToUploadDataUrl(f)
+                  .then((url) => onChange({ [s.key]: url }))
+                  .catch((err) => setFormError(documentUploadErrorMessage(err)));
+                e.target.value = '';
               }}
             />
             {data[s.key] ? <DocumentFilePreview url={data[s.key]} label={s.label} /> : null}
@@ -997,9 +1072,17 @@ export function MembersPage() {
         />
 
         <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-600">
-          <span className="rounded-xl border border-zinc-200/90 bg-white px-3 py-2 shadow-sm">
-            <span className="font-semibold text-zinc-900">{stats.total}</span> membre{stats.total !== 1 ? 's' : ''}
-          </span>
+          {membersFiltersActiveCount > 0 ? (
+            <span className="rounded-xl border border-[#416B9F]/25 bg-[#416B9F]/8 px-3 py-2 shadow-sm">
+              <span className="font-semibold text-[#416B9F]">{filtered.length}</span> affiché
+              {filtered.length !== 1 ? 's' : ''} sur{' '}
+              <span className="font-semibold text-zinc-900">{stats.total}</span> membre{stats.total !== 1 ? 's' : ''}
+            </span>
+          ) : (
+            <span className="rounded-xl border border-zinc-200/90 bg-white px-3 py-2 shadow-sm">
+              <span className="font-semibold text-zinc-900">{stats.total}</span> membre{stats.total !== 1 ? 's' : ''}
+            </span>
+          )}
           <span className="rounded-xl border border-emerald-200/80 bg-emerald-50/60 px-3 py-2">
             <span className="font-semibold text-emerald-800">{stats.active}</span> actif{stats.active !== 1 ? 's' : ''}
           </span>
@@ -1035,8 +1118,18 @@ export function MembersPage() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Rechercher un membre…"
-                className="w-full rounded-xl border border-zinc-200/90 bg-white py-2.5 pl-9 pr-3 text-sm shadow-sm outline-none focus:border-[#416B9F]/60 focus:ring-2 focus:ring-[#416B9F]/15"
+                className="w-full rounded-xl border border-zinc-200/90 bg-white py-2.5 pl-9 pr-9 text-sm shadow-sm outline-none focus:border-[#416B9F]/60 focus:ring-2 focus:ring-[#416B9F]/15"
               />
+              {search.trim() ? (
+                <button
+                  type="button"
+                  onClick={() => setSearch('')}
+                  className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600"
+                  aria-label="Effacer la recherche"
+                >
+                  <X className="h-4 w-4" strokeWidth={2} />
+                </button>
+              ) : null}
             </div>
             <div className="flex flex-wrap gap-1.5">
               {(['all', 'admin', 'agent', 'proprietaire', 'client'] as const).map((k) => {
@@ -1083,7 +1176,32 @@ export function MembersPage() {
             <div className="max-h-[min(32rem,58vh)] space-y-2 overflow-y-auto pr-0.5">
               {filtered.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50 px-3 py-8 text-center text-xs text-zinc-500">
-                  Aucun résultat. Créez un membre ou modifiez les filtres.
+                  {sorted.length > 0 ? (
+                    <>
+                      <p>
+                        Aucun membre ne correspond aux filtres
+                        {search.trim() ? (
+                          <>
+                            {' '}
+                            (recherche « <span className="font-semibold text-zinc-700">{search.trim()}</span> »)
+                          </>
+                        ) : null}
+                        .
+                      </p>
+                      <p className="mt-1">
+                        {sorted.length} membre{sorted.length !== 1 ? 's' : ''} au total dans le catalogue.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={resetMembersFilters}
+                        className="mt-3 inline-flex items-center rounded-lg bg-[#416B9F] px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-[#365b87]"
+                      >
+                        Réinitialiser les filtres
+                      </button>
+                    </>
+                  ) : (
+                    <p>Aucun membre. Créez-en un avec le bouton ci-dessus.</p>
+                  )}
                 </div>
               ) : (
                 filtered.map((m) => {

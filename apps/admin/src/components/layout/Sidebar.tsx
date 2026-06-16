@@ -4,6 +4,8 @@ import type { LucideIcon } from 'lucide-react';
 import {
   Calendar,
   CalendarDays,
+  Calculator,
+  Contact,
   LayoutDashboard,
   Megaphone,
   PackagePlus,
@@ -16,29 +18,44 @@ import {
   ClipboardList,
 } from 'lucide-react';
 import { useAuthStore } from '@/stores/auth';
-import { isOwnerUser } from '@/lib/userRoles';
+import { isDafUser, isOwnerUser, hasComptabiliteAccess } from '@/lib/userRoles';
 import { api } from '@/lib/api';
+import { AzurLogo } from '@/components/brand/AzurLogo';
 
-const calendarNavChildren: { to: string; label: string; Icon: LucideIcon; end?: boolean }[] = [
-  { to: '/calendrier', label: 'Planning', Icon: Calendar, end: true },
-  { to: '/reservations', label: 'Réservations', Icon: CalendarDays },
+const calendarNavChildren: {
+  to: string;
+  label: string;
+  Icon: LucideIcon;
+  end?: boolean;
+  tourId: string;
+}[] = [
+  { to: '/calendrier', label: 'Planning', Icon: Calendar, end: true, tourId: 'admin-nav-calendar-planning' },
+  { to: '/reservations', label: 'Réservations', Icon: CalendarDays, tourId: 'admin-nav-reservations' },
 ];
 
-const dashboardNav: { to: string; label: string; Icon: LucideIcon; end?: boolean } = {
+const dashboardNav: { to: string; label: string; Icon: LucideIcon; end?: boolean; tourId: string } = {
   to: '/dashboard',
   label: 'Dashboard',
   Icon: LayoutDashboard,
   end: true,
+  tourId: 'admin-nav-dashboard',
 };
 
-const navItems: { to: string; label: string; Icon: LucideIcon; end?: boolean }[] = [
-  { to: '/annonces', label: 'Annonces', Icon: Megaphone },
-  { to: '/bateaux', label: 'Bateaux', Icon: Ship },
-  { to: '/coupons', label: 'Coupons', Icon: TicketPercent },
-  { to: '/clients', label: 'Membres', Icon: Users },
-  { to: '/extras', label: 'Extras', Icon: PackagePlus },
-  { to: '/finances', label: 'Finances', Icon: Wallet },
-  { to: '/check-flow/formulaires', label: 'Check-in/out', Icon: ClipboardList },
+const comptabiliteNavItem = {
+  to: '/comptabilite',
+  label: 'Comptabilité',
+  Icon: Calculator,
+  tourId: 'admin-nav-comptabilite',
+} as const;
+
+const navItems: { to: string; label: string; Icon: LucideIcon; end?: boolean; tourId: string }[] = [
+  { to: '/annonces', label: 'Annonces', Icon: Megaphone, tourId: 'admin-nav-annonces' },
+  { to: '/bateaux', label: 'Bateaux', Icon: Ship, tourId: 'admin-nav-bateaux' },
+  { to: '/coupons', label: 'Coupons', Icon: TicketPercent, tourId: 'admin-nav-coupons' },
+  { to: '/clients', label: 'Membres', Icon: Users, tourId: 'admin-nav-membres' },
+  { to: '/extras', label: 'Extras', Icon: PackagePlus, tourId: 'admin-nav-extras' },
+  { to: '/finances', label: 'Finances', Icon: Wallet, tourId: 'admin-nav-finances' },
+  { to: '/check-flow/formulaires', label: 'Check-in/out', Icon: ClipboardList, tourId: 'admin-nav-checkflow' },
 ];
 
 const iconSize = { className: 'h-5 w-5 shrink-0', strokeWidth: 1.75 } as const;
@@ -73,6 +90,7 @@ function CalendarNavSection() {
             key={item.to}
             to={item.to}
             end={item.end}
+            data-tour={item.tourId}
             className={({ isActive }) => navLinkClasses(isActive, true)}
           >
             <Icon {...subIconSize} aria-hidden />
@@ -96,15 +114,38 @@ function profileAvatarUrl(firstName: string, lastName: string, email: string) {
   return `https://ui-avatars.com/api/?${params.toString()}`;
 }
 
-const ownerNavItems: { to: string; label: string; Icon: LucideIcon; end?: boolean }[] = [
-  { to: '/calendrier', label: 'Mon calendrier', Icon: Calendar, end: true },
-  { to: '/reservations', label: 'Mes réservations', Icon: CalendarDays },
+const dafNavItems: {
+  to: string;
+  label: string;
+  Icon: LucideIcon;
+  end?: boolean;
+  tourId: string;
+}[] = [
+  { to: '/comptabilite', label: 'Comptabilité', Icon: Calculator, end: true, tourId: 'daf-nav-comptabilite' },
+];
+
+const ownerNavItems: {
+  to: string;
+  label: string;
+  Icon: LucideIcon;
+  end?: boolean;
+  tourId: string;
+}[] = [
+  { to: '/calendrier', label: 'Mon calendrier', Icon: Calendar, end: true, tourId: 'owner-nav-calendar' },
+  { to: '/reservations', label: 'Mes réservations', Icon: CalendarDays, tourId: 'owner-nav-reservations' },
+  { to: '/contact', label: 'Contact', Icon: Contact, tourId: 'owner-nav-contact' },
+  { to: '/parametres', label: 'Paramètres', Icon: Settings, tourId: 'owner-nav-settings' },
 ];
 
 export function Sidebar() {
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const ownerMode = isOwnerUser(user.role);
+  const dafMode = isDafUser(user.role);
+  const comptabiliteAccess = hasComptabiliteAccess(user.role, user.permComptabilite);
+  const deskNavItems = comptabiliteAccess && !dafMode
+    ? [...navItems, { ...comptabiliteNavItem, end: undefined }]
+    : navItems;
   const rt = useAuthStore((s) => s.refreshToken);
   const clear = useAuthStore((s) => s.clear);
   const [avatarBroken, setAvatarBroken] = useState(false);
@@ -128,35 +169,41 @@ export function Sidebar() {
     <aside className="flex h-screen w-[260px] shrink-0 flex-col border-r border-zinc-200/90 bg-[#f4f5f8]">
       {/* Marque */}
       <div className="px-5 pt-7 pb-2 shrink-0">
-        <div className="flex gap-3 items-center">
-          <div
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-zinc-200/90 bg-white shadow-sm"
-            aria-hidden
-          >
-            <img
-              src="/bleu-calanque-logo.png"
-              alt=""
-              className="h-8 w-8 object-contain"
-              aria-hidden
-              draggable={false}
-            />
-          </div>
-          <div>
-            <p className="text-lg font-bold tracking-tight leading-tight text-zinc-900">Bleu Calanque</p>
-            <p className="text-xs font-medium text-zinc-400">
-              {ownerMode ? 'Espace propriétaire' : 'Gestion location'}
-            </p>
-          </div>
-        </div>
+        <AzurLogo variant="full" className="h-9 w-auto" />
+        <p className="mt-2 text-xs font-medium text-zinc-400">
+          {dafMode ? 'Comptabilité' : ownerMode ? 'Espace propriétaire' : 'Gestion location'}
+        </p>
       </div>
 
       {/* Navigation — la zone centrale absorbe l’espace (effet « air » sous le menu, réf. Invo) */}
       <nav className="flex overflow-y-auto flex-col flex-1 gap-1 px-4 pt-6 pb-4 min-h-0">
-        {ownerMode ? (
+        {dafMode ? (
+          dafNavItems.map((item) => {
+            const { Icon } = item;
+            return (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.end}
+                data-tour={item.tourId}
+                className={({ isActive }) => navLinkClasses(isActive)}
+              >
+                <Icon {...iconSize} aria-hidden />
+                <span>{item.label}</span>
+              </NavLink>
+            );
+          })
+        ) : ownerMode ? (
           ownerNavItems.map((item) => {
             const { Icon } = item;
             return (
-              <NavLink key={item.to} to={item.to} end={item.end} className={({ isActive }) => navLinkClasses(isActive)}>
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.end}
+                data-tour={item.tourId}
+                className={({ isActive }) => navLinkClasses(isActive)}
+              >
                 <Icon {...iconSize} aria-hidden />
                 <span>{item.label}</span>
               </NavLink>
@@ -167,16 +214,23 @@ export function Sidebar() {
             <NavLink
               to={dashboardNav.to}
               end={dashboardNav.end}
+              data-tour={dashboardNav.tourId}
               className={({ isActive }) => navLinkClasses(isActive)}
             >
               <dashboardNav.Icon {...iconSize} aria-hidden />
               <span>{dashboardNav.label}</span>
             </NavLink>
             <CalendarNavSection />
-            {navItems.map((item) => {
+            {deskNavItems.map((item) => {
               const { Icon } = item;
               return (
-                <NavLink key={item.to} to={item.to} end={item.end} className={({ isActive }) => navLinkClasses(isActive)}>
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.end}
+                  data-tour={item.tourId}
+                  className={({ isActive }) => navLinkClasses(isActive)}
+                >
                   <Icon {...iconSize} aria-hidden />
                   <span>{item.label}</span>
                 </NavLink>
@@ -188,8 +242,12 @@ export function Sidebar() {
 
       {/* Pied : profil + déconnexion style produit */}
       <div className="shrink-0 space-y-4 border-t border-zinc-200/80 bg-[#f4f5f8] px-4 pb-6 pt-5">
-        {!ownerMode ? (
-          <NavLink to="/parametres" className={({ isActive }) => navLinkClasses(isActive)}>
+        {!ownerMode && !dafMode ? (
+          <NavLink
+            to="/parametres"
+            data-tour="admin-nav-parametres"
+            className={({ isActive }) => navLinkClasses(isActive)}
+          >
             <Settings {...iconSize} aria-hidden />
             <span>Paramètres</span>
           </NavLink>
@@ -204,12 +262,16 @@ export function Sidebar() {
           <span>Déconnexion</span>
         </button>
 
+        <div
+          data-tour={dafMode ? 'daf-footer-profile' : ownerMode ? 'owner-footer-profile' : 'admin-footer-profile'}
+          className="shrink-0"
+        >
         <NavLink
           to="/profil"
           aria-label="Mon profil"
           className={({ isActive }) =>
             [
-              'flex gap-3 items-center rounded-2xl p-2 -m-2 transition-colors',
+              'flex gap-3 items-center rounded-2xl p-2 transition-colors',
               isActive ? 'bg-white/90 ring-1 ring-zinc-200/80' : 'hover:bg-white/70',
             ].join(' ')
           }
@@ -241,6 +303,7 @@ export function Sidebar() {
             </p>
           </div>
         </NavLink>
+        </div>
       </div>
     </aside>
   );

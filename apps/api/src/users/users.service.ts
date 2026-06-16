@@ -5,6 +5,7 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SecureMediaService } from '../common/media/secure-media.service';
 import { AuditService } from '../common/audit/audit.service';
@@ -18,6 +19,15 @@ import type {
 } from '@bleu-calanque/shared';
 import { UserRole } from '@bleu-calanque/shared';
 import { OwnerScopeService } from '../common/auth/owner-scope.service';
+
+const OWNER_NOTIFY_SELECT = {
+  ownerNotifyReservationsEnabled: true,
+  ownerNotifyNewReservation: true,
+  ownerNotifyReservationUpdated: true,
+  ownerNotifyReservationCancelled: true,
+  ownerNotifyReservationRestored: true,
+  ownerNotifyReservationPaid: true,
+} satisfies Prisma.UserSelect;
 
 @Injectable()
 export class UsersService {
@@ -171,6 +181,67 @@ export class UsersService {
       },
     });
     return user;
+  }
+
+  mapOwnerNotificationPreferences(user: {
+    ownerNotifyReservationsEnabled: boolean;
+    ownerNotifyNewReservation: boolean;
+    ownerNotifyReservationUpdated: boolean;
+    ownerNotifyReservationCancelled: boolean;
+    ownerNotifyReservationRestored: boolean;
+    ownerNotifyReservationPaid: boolean;
+  }) {
+    return {
+      enabled: user.ownerNotifyReservationsEnabled,
+      onNewReservation: user.ownerNotifyNewReservation,
+      onReservationUpdated: user.ownerNotifyReservationUpdated,
+      onReservationCancelled: user.ownerNotifyReservationCancelled,
+      onReservationRestored: user.ownerNotifyReservationRestored,
+      onReservationPaid: user.ownerNotifyReservationPaid,
+    };
+  }
+
+  async getOwnerNotificationPreferences(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: OWNER_NOTIFY_SELECT,
+    });
+    if (!user) throw new NotFoundException();
+    return this.mapOwnerNotificationPreferences(user);
+  }
+
+  async replaceOwnerNotificationPreferences(
+    userId: string,
+    prefs: {
+      enabled: boolean;
+      onNewReservation: boolean;
+      onReservationUpdated: boolean;
+      onReservationCancelled: boolean;
+      onReservationRestored: boolean;
+      onReservationPaid: boolean;
+    },
+  ) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException();
+    if (user.role !== 'OWNER') {
+      throw new BadRequestException('Réservé aux comptes propriétaire.');
+    }
+
+    const data: Prisma.UserUncheckedUpdateInput = {
+      ownerNotifyReservationsEnabled: prefs.enabled,
+      ownerNotifyNewReservation: prefs.onNewReservation,
+      ownerNotifyReservationUpdated: prefs.onReservationUpdated,
+      ownerNotifyReservationCancelled: prefs.onReservationCancelled,
+      ownerNotifyReservationRestored: prefs.onReservationRestored,
+      ownerNotifyReservationPaid: prefs.onReservationPaid,
+    };
+
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data,
+      select: OWNER_NOTIFY_SELECT,
+    });
+    return this.mapOwnerNotificationPreferences(updated);
   }
 }
 

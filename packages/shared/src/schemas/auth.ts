@@ -42,6 +42,8 @@ export interface AuthUser {
   ownerMemberId?: string | null;
   /** Forcer un changement de mot de passe (ex: première connexion). */
   mustChangePassword?: boolean;
+  /** Accès module Comptabilité (fiche membre ou rôle DAF). */
+  permComptabilite?: boolean;
 }
 
 export interface AuthTokens {

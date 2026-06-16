@@ -4,7 +4,8 @@ export const ADMIN_BROADCAST_CHANNEL = 'bc-admin-events';
 export type AdminBroadcastMessage =
   | { type: 'payment-captured'; reservationId: string }
   | { type: 'poll-notifications' }
-  | { type: 'reservations-changed' };
+  | { type: 'reservations-changed' }
+  | { type: 'unavailabilities-changed' };
 
 export function postAdminBroadcast(message: AdminBroadcastMessage) {
   try {

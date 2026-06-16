@@ -1,17 +1,44 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Bell, Building2, ClipboardCheck, FileText, Handshake, LifeBuoy, Shield } from 'lucide-react';
+import {
+  Anchor,
+  Bell,
+  Building2,
+  ClipboardCheck,
+  FileText,
+  Globe,
+  Handshake,
+  Landmark,
+  Link2,
+  Mail,
+} from 'lucide-react';
+import { BankSettingsTab } from '@/pages/parametres/BankSettingsTab';
+import { BookingSettingsTab } from '@/pages/parametres/BookingSettingsTab';
 import { CheckFlowSettingsTab } from '@/pages/parametres/CheckFlowSettingsTab';
 import { ContratsSettingsTab } from '@/pages/parametres/ContratsSettingsTab';
+import { EmailsSettingsTab } from '@/pages/parametres/EmailsSettingsTab';
+import { NauticManagerSettingsTab } from '@/pages/parametres/NauticManagerSettingsTab';
 import { NotificationsSettingsTab } from '@/pages/parametres/NotificationsSettingsTab';
 import { PartnersSettingsTab } from '@/pages/parametres/PartnersSettingsTab';
 import { PeriodesSettingsTab } from '@/pages/parametres/PeriodesSettingsTab';
+import { SeoSettingsTab } from '@/pages/parametres/SeoSettingsTab';
 import { SocieteSettingsTab } from '@/pages/parametres/SocieteSettingsTab';
 import { useSettingsStore } from '@/stores/settings';
 import { useDefaultPageFilters } from '@/contexts/PageFiltersContext';
 import { ContentReveal } from '@/components/ui/ContentReveal';
 import { SettingsPageSkeleton } from '@/components/skeletons/PageSkeletons';
 
-type TabId = 'societe' | 'periodes' | 'contrats' | 'partenaires' | 'notifications' | 'checkflow';
+type TabId =
+  | 'societe'
+  | 'periodes'
+  | 'contrats'
+  | 'partenaires'
+  | 'booking'
+  | 'bank'
+  | 'emails'
+  | 'seo'
+  | 'nauticManager'
+  | 'notifications'
+  | 'checkflow';
 
 function Chip(props: Readonly<{ active: boolean; label: string; onClick: () => void }>) {
   return (
@@ -27,6 +54,19 @@ function Chip(props: Readonly<{ active: boolean; label: string; onClick: () => v
     >
       {props.label}
     </button>
+  );
+}
+
+function TabSection(props: Readonly<{ title: string; Icon: typeof Building2; children: React.ReactNode }>) {
+  const Icon = props.Icon;
+  return (
+    <section className="rounded-2xl border border-zinc-200/90 bg-white p-5 shadow-sm shadow-zinc-200/40">
+      <div className="flex items-center gap-2">
+        <Icon className="h-5 w-5 text-zinc-500" strokeWidth={1.75} aria-hidden />
+        <h2 className="text-sm font-semibold text-zinc-900">{props.title}</h2>
+      </div>
+      <div className="mt-4">{props.children}</div>
+    </section>
   );
 }
 
@@ -48,11 +88,18 @@ export function ParametresPage() {
         { id: 'periodes' as const, label: 'Périodes', Icon: FileText },
         { id: 'contrats' as const, label: 'Contrats', Icon: FileText },
         { id: 'partenaires' as const, label: 'Partenaires', Icon: Handshake },
+        { id: 'booking' as const, label: 'Réservations', Icon: Anchor },
+        { id: 'bank' as const, label: 'Banque', Icon: Landmark },
+        { id: 'emails' as const, label: 'E-mails', Icon: Mail },
+        { id: 'seo' as const, label: 'SEO', Icon: Globe },
+        { id: 'nauticManager' as const, label: 'Nautic Manager', Icon: Link2 },
         { id: 'notifications' as const, label: 'Notifications', Icon: Bell },
         { id: 'checkflow' as const, label: 'Check-in/out', Icon: ClipboardCheck },
       ] as const,
     [],
   );
+
+  const activeTab = tabs.find((t) => t.id === tab);
 
   return (
     <ContentReveal ready={settingsHydrated} skeleton={<SettingsPageSkeleton />}>
@@ -68,7 +115,6 @@ export function ParametresPage() {
             onClick={() => resetSettings()}
             className="inline-flex items-center gap-2 rounded-2xl border border-zinc-200/90 bg-white px-4 py-3 text-sm font-semibold text-zinc-700 shadow-sm hover:bg-zinc-50"
           >
-            <Shield className="h-4 w-4 text-zinc-500" strokeWidth={1.9} aria-hidden />
             Réinitialiser
           </button>
         </div>
@@ -82,94 +128,27 @@ export function ParametresPage() {
         </div>
       </section>
 
+      {activeTab && tab !== 'societe' ? (
+        <TabSection title={activeTab.label} Icon={activeTab.Icon}>
+          {tab === 'notifications' ? <NotificationsSettingsTab /> : null}
+          {tab === 'checkflow' ? <CheckFlowSettingsTab /> : null}
+          {tab === 'periodes' ? <PeriodesSettingsTab /> : null}
+          {tab === 'contrats' ? <ContratsSettingsTab /> : null}
+          {tab === 'partenaires' ? <PartnersSettingsTab /> : null}
+          {tab === 'booking' ? <BookingSettingsTab /> : null}
+          {tab === 'bank' ? <BankSettingsTab /> : null}
+          {tab === 'emails' ? <EmailsSettingsTab /> : null}
+          {tab === 'seo' ? <SeoSettingsTab /> : null}
+          {tab === 'nauticManager' ? <NauticManagerSettingsTab /> : null}
+        </TabSection>
+      ) : null}
+
       {tab === 'societe' ? (
-        <section className="rounded-2xl border border-zinc-200/90 bg-white p-5 shadow-sm shadow-zinc-200/40">
-          <div className="flex items-center gap-2">
-            <Building2 className="h-5 w-5 text-zinc-500" strokeWidth={1.75} aria-hidden />
-            <h2 className="text-sm font-semibold text-zinc-900">Société</h2>
-          </div>
-          <div className="mt-4">
-            <SocieteSettingsTab />
-          </div>
-        </section>
+        <TabSection title="Société" Icon={Building2}>
+          <SocieteSettingsTab />
+        </TabSection>
       ) : null}
-
-      {tab === 'notifications' ? (
-        <section className="rounded-2xl border border-zinc-200/90 bg-white p-5 shadow-sm shadow-zinc-200/40">
-          <div className="flex items-center gap-2">
-            <Bell className="h-5 w-5 text-zinc-500" strokeWidth={1.75} aria-hidden />
-            <h2 className="text-sm font-semibold text-zinc-900">Notifications</h2>
-          </div>
-          <div className="mt-4">
-            <NotificationsSettingsTab />
-          </div>
-        </section>
-      ) : null}
-
-      {tab === 'checkflow' ? (
-        <section className="rounded-2xl border border-zinc-200/90 bg-white p-5 shadow-sm shadow-zinc-200/40">
-          <div className="flex items-center gap-2">
-            <ClipboardCheck className="h-5 w-5 text-zinc-500" strokeWidth={1.75} aria-hidden />
-            <h2 className="text-sm font-semibold text-zinc-900">Check-in / Check-out</h2>
-          </div>
-          <div className="mt-4">
-            <CheckFlowSettingsTab />
-          </div>
-        </section>
-      ) : null}
-
-      {tab === 'periodes' ? (
-        <section className="rounded-2xl border border-zinc-200/90 bg-white p-5 shadow-sm shadow-zinc-200/40">
-          <div className="flex items-center gap-2">
-            <FileText className="h-5 w-5 text-zinc-500" strokeWidth={1.75} aria-hidden />
-            <h2 className="text-sm font-semibold text-zinc-900">Tarifs & saisons</h2>
-          </div>
-          <div className="mt-4">
-            <PeriodesSettingsTab />
-          </div>
-        </section>
-      ) : null}
-
-      {tab === 'contrats' ? (
-        <section className="rounded-2xl border border-zinc-200/90 bg-white p-5 shadow-sm shadow-zinc-200/40">
-          <div className="flex items-center gap-2">
-            <FileText className="h-5 w-5 text-zinc-500" strokeWidth={1.75} aria-hidden />
-            <h2 className="text-sm font-semibold text-zinc-900">Contrats</h2>
-          </div>
-          <div className="mt-4">
-            <ContratsSettingsTab />
-          </div>
-        </section>
-      ) : null}
-
-      {tab === 'partenaires' ? (
-        <section className="rounded-2xl border border-zinc-200/90 bg-white p-5 shadow-sm shadow-zinc-200/40">
-          <div className="flex items-center gap-2">
-            <Handshake className="h-5 w-5 text-zinc-500" strokeWidth={1.75} aria-hidden />
-            <h2 className="text-sm font-semibold text-zinc-900">Partenaires</h2>
-          </div>
-          <div className="mt-4">
-            <PartnersSettingsTab />
-          </div>
-        </section>
-      ) : null}
-
-      <section className="rounded-2xl border border-zinc-200/90 bg-white p-4 shadow-sm shadow-zinc-200/40">
-        <div className="flex items-start gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-zinc-100 text-zinc-600" aria-hidden>
-            <LifeBuoy className="h-5 w-5" strokeWidth={1.75} />
-          </div>
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-zinc-900">À brancher ensuite</p>
-            <p className="mt-1 text-sm text-zinc-600">
-              La plupart des onglets sont synchronisés avec le serveur. Utilisez « Réinitialiser » uniquement pour revenir aux
-              valeurs par défaut locales en cas de besoin.
-            </p>
-          </div>
-        </div>
-      </section>
     </div>
     </ContentReveal>
   );
 }
-

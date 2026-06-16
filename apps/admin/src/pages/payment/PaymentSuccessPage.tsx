@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { CheckCircle2, FileText, Loader2 } from 'lucide-react';
 import { postAdminBroadcast } from '@/lib/adminBroadcast';
 import { api } from '@/lib/api';
@@ -119,11 +119,6 @@ export function PaymentSuccessPage() {
             ) : null}
           </>
         )}
-        <p className="mt-8 text-center">
-          <Link to="/login" className="text-sm font-semibold text-[#7eb3e8] hover:underline">
-            Retour à l’espace Bleu Calanque
-          </Link>
-        </p>
       </div>
     </div>
   );

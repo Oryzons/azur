@@ -33,6 +33,9 @@ import {
   type ExtraPriceKind,
 } from '@/stores/extras';
 import { useDefaultPageFilters } from '@/contexts/PageFiltersContext';
+import { usePersistedEnum, usePersistedString } from '@/lib/pageFilterStorage';
+import { EXTRA_ICON_OPTIONS } from '@/lib/extraIcons';
+import { resolveExtraIcon } from '@bleu-calanque/shared';
 
 type EditorSection = 'general' | 'pricing' | 'availability';
 type ListFilter = 'all' | 'active' | 'inactive';
@@ -82,8 +85,12 @@ export function ExtrasPage() {
   const removeExtra = useExtrasStore((s) => s.removeExtra);
 
   const [selectedId, setSelectedId] = useState<string>('');
-  const [search, setSearch] = useState('');
-  const [listFilter, setListFilter] = useState<ListFilter>('all');
+  const [search, setSearch] = usePersistedString('extras.search');
+  const [listFilter, setListFilter] = usePersistedEnum<ListFilter>(
+    'extras.listFilter',
+    'all',
+    ['all', 'active', 'inactive'],
+  );
   const [section, setSection] = useState<EditorSection>('general');
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [formError, setFormError] = useState('');
@@ -147,10 +154,10 @@ export function ExtrasPage() {
     [extras],
   );
 
-  function patchSelected(patch: Partial<Extra>) {
+  async function patchSelected(patch: Partial<Extra>) {
     if (!selected) return;
     setFormError('');
-    const res = updateExtra({ ...selected, ...patch });
+    const res = await updateExtra({ ...selected, ...patch });
     if (!res.ok) setFormError(res.error);
   }
 
@@ -386,6 +393,33 @@ export function ExtrasPage() {
                           placeholder="Détail affiché aux agents (optionnel)"
                         />
                       </label>
+                      <div className="block">
+                        <FieldLabel>Icône (calendrier)</FieldLabel>
+                        <p className="mt-1 text-[11px] text-zinc-500">
+                          Affichée dans le bloc de réservation pour repérer cet extra d’un coup d’œil.
+                        </p>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {EXTRA_ICON_OPTIONS.map(({ key, label, Icon }) => {
+                            const active = resolveExtraIcon(selected.icon) === key;
+                            return (
+                              <button
+                                key={key}
+                                type="button"
+                                onClick={() => patchSelected({ icon: key })}
+                                title={label}
+                                className={[
+                                  'flex h-10 w-10 items-center justify-center rounded-xl border transition',
+                                  active
+                                    ? 'border-[#416B9F] bg-[#416B9F]/10 text-[#416B9F] ring-1 ring-[#416B9F]/25'
+                                    : 'border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-50',
+                                ].join(' ')}
+                              >
+                                <Icon className="h-5 w-5" strokeWidth={2} />
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
                     </div>
                   ) : null}
 
@@ -492,7 +526,7 @@ export function ExtrasPage() {
                   {section === 'availability' ? (
                     <div className="space-y-4">
                       <label className="block sm:max-w-xs">
-                        <FieldLabel>Stock disponible</FieldLabel>
+                        <FieldLabel>Stock disponible (par jour)</FieldLabel>
                         <input
                           value={selected.stock === null ? '' : String(selected.stock)}
                           onChange={(e) => {
@@ -509,7 +543,8 @@ export function ExtrasPage() {
                           placeholder="Vide = illimité"
                         />
                         <p className="mt-1 text-[11px] text-zinc-500">
-                          Laissez vide pour ne pas limiter les ventes de cet extra.
+                          Nombre maximum louable le <strong>même jour</strong> (ex. 2 bouées le lundi, puis encore 1 le
+                          mardi). Laissez vide pour ne pas limiter.
                         </p>
                       </label>
 

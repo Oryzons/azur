@@ -17,6 +17,8 @@ export type StoredReservation = {
   color?: string;
   details?: ReservationWizardDetails;
   totalDueCents?: number | null;
+  depositPercent?: number | null;
+  installmentPlan?: import('@/pages/calendar/reservationTypes').ReservationInstallmentView[];
   /** Empreinte caution Stripe (PaymentIntent en requires_capture). */
   stripeDepositPaymentIntentId?: string | null;
   checkInDone?: boolean;
@@ -25,6 +27,8 @@ export type StoredReservation = {
   rentalContractLocked?: boolean;
   rentalContractDataStale?: boolean;
   rentalContractStatus?: import('@bleu-calanque/shared').RentalContractStatus;
+  stripeFeeCents?: number | null;
+  stripeNetCents?: number | null;
 };
 
 function serialize(r: Reservation): StoredReservation {
@@ -155,6 +159,12 @@ function reservationToApi(s: StoredReservation) {
     couponCode: d?.couponCode?.trim() ? d.couponCode.trim().replaceAll(/\s+/g, '').toUpperCase() : null,
     airbusBadge: d?.airbusBadge?.trim() ? d.airbusBadge.trim().replaceAll(/\s+/g, '').toUpperCase() : null,
     installments: d?.installments ?? null,
+    depositPercent:
+      d?.installments === 2 && d?.depositPercent?.trim()
+        ? Math.min(99, Math.max(1, Math.round(Number(d.depositPercent.replaceAll(',', '.')))))
+        : null,
+    installmentMethods:
+      d?.installments === 2 && Array.isArray(d?.installmentMethods) ? d.installmentMethods : undefined,
     settlementNote: d?.settlementNote ?? null,
     paymentCapturedAt: d?.paymentCapturedAt ?? null,
     depositCapturedAt: d?.depositCapturedAt ?? null,
@@ -181,6 +191,23 @@ function refundsFromApiRows(x: any): NonNullable<ReservationWizardDetails['refun
     at: r?.refundedAt ? new Date(r.refundedAt).toISOString() : new Date().toISOString(),
     note: r?.note ?? undefined,
   }));
+}
+
+function installmentPlanFromApi(x: any): import('@/pages/calendar/reservationTypes').ReservationInstallmentView[] {
+  if (!Array.isArray(x?.installmentPlan)) return [];
+  return [...x.installmentPlan]
+    .map((p: any) => ({
+      sequence: Number(p?.sequence ?? 0),
+      label: p?.label ?? null,
+      amountCents: Number(p?.amountCents ?? 0),
+      method: String(p?.method ?? 'ONLINE') as import('@bleu-calanque/shared').PaymentMethod,
+      status: String(p?.status ?? 'PENDING') as import('@bleu-calanque/shared').InstallmentStatus,
+      paidAt: p?.paidAt ? new Date(p.paidAt).toISOString() : null,
+      paymentLinkUrl: p?.paymentLinkUrl ?? null,
+      stripeFeeCents: p?.stripeFeeCents != null ? Number(p.stripeFeeCents) : null,
+      stripeNetCents: p?.stripeNetCents != null ? Number(p.stripeNetCents) : null,
+    }))
+    .sort((a, b) => a.sequence - b.sequence);
 }
 
 function reservationFromApi(x: any): StoredReservation {
@@ -229,6 +256,10 @@ function reservationFromApi(x: any): StoredReservation {
       airbusBadge: String(x?.airbusBadge ?? ''),
       extras: extrasMap,
       installments: (x?.installments === 2 ? 2 : 1),
+      depositPercent: x?.depositPercent != null ? String(x.depositPercent) : '50',
+      installmentMethods: Array.isArray(x?.installmentPlan)
+        ? [...x.installmentPlan].sort((a: any, b: any) => a.sequence - b.sequence).map((p: any) => p.method)
+        : ['ONLINE', 'ONLINE'],
       settlementNote: String(x?.settlementNote ?? ''),
       paymentCapturedAt: x?.paymentCapturedAt ? new Date(x.paymentCapturedAt).toISOString() : null,
       depositCapturedAt: x?.depositCapturedAt ? new Date(x.depositCapturedAt).toISOString() : null,
@@ -263,13 +294,21 @@ function reservationFromApi(x: any): StoredReservation {
       details = {
         ...details,
         cancelledAt: new Date(x.cancelledAt).toISOString(),
-        status: 'cancelled',
+        ...(apiStatus === 'refunded' || apiStatus === 'partially_refunded'
+          ? { status: apiStatus }
+          : { status: 'cancelled' as const }),
       };
     } else if (apiStatus) {
       details = { ...details, status: apiStatus };
     }
     const resolved = resolveReservationStatus(details, x?.status);
-    if (x?.paymentCapturedAt && resolved !== 'cancelled' && apiStatus !== 'cancelled') {
+    if (
+      x?.paymentCapturedAt &&
+      resolved !== 'cancelled' &&
+      apiStatus !== 'cancelled' &&
+      apiStatus !== 'refunded' &&
+      apiStatus !== 'partially_refunded'
+    ) {
       const paidStatus =
         resolved === 'refunded' || resolved === 'partially_refunded' ? resolved : 'reserved_paid';
       details = {
@@ -286,6 +325,17 @@ function reservationFromApi(x: any): StoredReservation {
       details = { ...details, status: apiStatus };
     }
   }
+
+  const installmentPlan = installmentPlanFromApi(x);
+  if (details) {
+    if (x?.depositPercent != null) {
+      details = { ...details, depositPercent: String(x.depositPercent) };
+    }
+    if (installmentPlan.length === 2) {
+      details = { ...details, installmentMethods: installmentPlan.map((p) => p.method) };
+    }
+  }
+
   return {
     id: String(x?.id ?? ''),
     boatId: String(x?.boatId ?? ''),
@@ -316,6 +366,10 @@ function reservationFromApi(x: any): StoredReservation {
         apiStatus: apiStatus ?? null,
       }),
     totalDueCents: x?.totalDueCents != null ? Number(x.totalDueCents) : null,
+    depositPercent: x?.depositPercent != null ? Number(x.depositPercent) : null,
+    installmentPlan,
+    stripeFeeCents: x?.stripeFeeCents != null ? Number(x.stripeFeeCents) : null,
+    stripeNetCents: x?.stripeNetCents != null ? Number(x.stripeNetCents) : null,
   };
 }
 

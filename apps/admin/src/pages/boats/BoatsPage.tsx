@@ -1,15 +1,29 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Plus, Search, Ship, Tags, X, Trash2, Pencil } from 'lucide-react';
 import { usePresence } from '@/lib/presence';
-import { BOAT_TYPES_UI, useBoatsStore, defaultBoatDetails, type Boat, type BoatDetails, type BoatType, type WindlassType } from '@/stores/boats';
+import {
+  BOAT_TYPES_UI,
+  useBoatsStore,
+  defaultBoatDetails,
+  type Boat,
+  type BoatDetails,
+  type BoatLegalDocument,
+  type BoatLegalite,
+  type BoatLegaliteAssurance,
+  type BoatType,
+  type WindlassType,
+} from '@/stores/boats';
 import { Portal } from '@/components/Portal';
 import { useMembersStore } from '@/stores/members';
 import { usePageFiltersPanel, type PageFiltersConfig } from '@/contexts/PageFiltersContext';
+import { usePersistedNullableString, usePersistedString } from '@/lib/pageFilterStorage';
 import { PresentationPhotosField } from '@/components/media/PresentationPhotosField';
 import { BoatCoverAvatar } from '@/components/media/BoatCoverAvatar';
 import { coverPhotoUrl } from '@/lib/mediaPhotos';
 import { boatSearchHaystack, boatTypeLabel } from '@/lib/boatUi';
 import { BoatDetailPanel } from '@/components/boats/BoatDetailPanel';
+import { BoatLegalDocumentFile } from '@/components/boats/BoatLegalDocumentFile';
+import type { BoatLegalDocKey } from '@/lib/downloadFile';
 import { ContentReveal } from '@/components/ui/ContentReveal';
 import { ThreeStepGuide } from '@/components/ui/ThreeStepGuide';
 import { BoatsPageSkeleton } from '@/components/skeletons/BoatsPageSkeleton';
@@ -292,7 +306,7 @@ type BoatEditorModalProps = Readonly<{
   onSubmit: () => void;
 }>;
 
-type BoatExtraTab = 'generales' | 'dimensions' | 'motorisation' | 'equipements' | 'assurance';
+type BoatExtraTab = 'generales' | 'dimensions' | 'motorisation' | 'equipements' | 'legalite';
 
 type ExtraInfoPanelProps = Readonly<{
   tab: BoatExtraTab;
@@ -305,6 +319,7 @@ type ExtraInfoPanelProps = Readonly<{
   setModel: (v: string) => void;
   extra: BoatDetails;
   setExtra: React.Dispatch<React.SetStateAction<BoatDetails>>;
+  boatId?: string | null;
 }>;
 
 const EQUIPMENT_GROUPS: { key: string; title: string; items: { id: string; label: string }[] }[] = [
@@ -505,6 +520,246 @@ function windlassLabel(t: WindlassType): string {
   return '';
 }
 
+function formatLegalRenewalDate(iso: string): string {
+  const t = iso.trim();
+  if (!t) return '';
+  const d = new Date(`${t}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return t;
+  return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+function legalRenewalHint(dateFin: string): string | null {
+  if (!dateFin.trim()) return null;
+  const end = new Date(`${dateFin}T23:59:59`);
+  if (Number.isNaN(end.getTime())) return null;
+  const days = Math.ceil((end.getTime() - Date.now()) / 86400000);
+  if (days < 0) return 'Document expiré';
+  if (days <= 30) return `À renouveler sous ${days} jour${days > 1 ? 's' : ''}`;
+  return null;
+}
+
+function LegalRenewalDateField(props: Readonly<{
+  value: string;
+  onChange: (v: string) => void;
+}>) {
+  const hint = legalRenewalHint(props.value);
+  return (
+    <label className="block sm:col-span-2">
+      <FieldLabel>Date de fin / renouvellement</FieldLabel>
+      <input
+        type="date"
+        value={props.value}
+        onChange={(e) => props.onChange(e.target.value)}
+        className={inputBase()}
+      />
+      {hint ? (
+        <p
+          className={[
+            'mt-1.5 text-xs font-medium',
+            hint === 'Document expiré' ? 'text-red-600' : 'text-amber-700',
+          ].join(' ')}
+        >
+          {hint}
+        </p>
+      ) : props.value ? (
+        <p className="mt-1.5 text-xs text-zinc-500">Valide jusqu’au {formatLegalRenewalDate(props.value)}</p>
+      ) : null}
+    </label>
+  );
+}
+
+function LegalDocumentCard(props: Readonly<{
+  title: string;
+  description: string;
+  doc: BoatLegalDocument;
+  onChange: (patch: Partial<BoatLegalDocument>) => void;
+  downloadBasename: string;
+  boatId?: string | null;
+  docKey: BoatLegalDocKey;
+  organismeLabel?: string;
+  numeroLabel?: string;
+}>) {
+  const {
+    title,
+    description,
+    doc,
+    onChange,
+    downloadBasename,
+    boatId,
+    docKey,
+    organismeLabel = 'Organisme',
+    numeroLabel = 'N° du document',
+  } = props;
+  return (
+    <section className="rounded-2xl border border-zinc-200/90 bg-zinc-50/80 p-4">
+      <h3 className="text-sm font-semibold text-zinc-900">{title}</h3>
+      <p className="mt-1 text-xs leading-relaxed text-zinc-500">{description}</p>
+      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <label className="block">
+          <FieldLabel>{organismeLabel}</FieldLabel>
+          <input
+            value={doc.organisme}
+            onChange={(e) => onChange({ organisme: e.target.value })}
+            className={inputBase()}
+          />
+        </label>
+        <label className="block">
+          <FieldLabel>{numeroLabel}</FieldLabel>
+          <input
+            value={doc.numero}
+            onChange={(e) => onChange({ numero: e.target.value })}
+            className={inputBase()}
+          />
+        </label>
+        <LegalRenewalDateField value={doc.dateFin} onChange={(dateFin) => onChange({ dateFin })} />
+        <BoatLegalDocumentFile
+          label={title}
+          fileUrl={doc.fileUrl}
+          downloadBasename={downloadBasename}
+          boatId={boatId}
+          docKey={docKey}
+          onChange={(fileUrl) => onChange({ fileUrl })}
+          inputClassName={inputBase()}
+        />
+      </div>
+    </section>
+  );
+}
+
+function LegaliteTabPanel(props: Readonly<{
+  legalite: BoatLegalite;
+  setLegalite: (updater: (prev: BoatLegalite) => BoatLegalite) => void;
+  boatId?: string | null;
+}>) {
+  const { legalite, setLegalite, boatId } = props;
+  const patchAssurance = (patch: Partial<BoatLegaliteAssurance>) => {
+    setLegalite((prev) => ({ ...prev, assurance: { ...prev.assurance, ...patch } }));
+  };
+  const patchDoc = (key: 'contratGestion' | 'carteCirculation' | 'annexe240', patch: Partial<BoatLegalDocument>) => {
+    setLegalite((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
+  };
+
+  return (
+    <div className="mt-4 space-y-4">
+      <p className="text-xs leading-relaxed text-zinc-500">
+        Documents administratifs et réglementaires du bateau. Indiquez pour chacun une date de fin afin d’anticiper les
+        renouvellements.
+      </p>
+
+      <section className="rounded-2xl border border-zinc-200/90 bg-zinc-50/80 p-4">
+        <h3 className="text-sm font-semibold text-zinc-900">Assurance</h3>
+        <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+          Police d’assurance du bateau (utilisée sur les contrats de location).
+        </p>
+        <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <label className="block">
+            <FieldLabel>Assureur</FieldLabel>
+            <input
+              value={legalite.assurance.organisme}
+              onChange={(e) => patchAssurance({ organisme: e.target.value })}
+              className={inputBase()}
+              placeholder="Ex: AXA"
+            />
+          </label>
+          <label className="block">
+            <FieldLabel>N° de contrat / police</FieldLabel>
+            <input
+              value={legalite.assurance.numero}
+              onChange={(e) => patchAssurance({ numero: e.target.value })}
+              className={inputBase()}
+              placeholder="Ex: POL-12345"
+            />
+          </label>
+          <label className="block">
+            <FieldLabel>Montant de la franchise</FieldLabel>
+            <input
+              value={legalite.assurance.montantFranchise}
+              onChange={(e) => patchAssurance({ montantFranchise: e.target.value })}
+              className={inputBase()}
+              placeholder="Ex: 1500"
+              inputMode="numeric"
+            />
+          </label>
+          <label className="block">
+            <FieldLabel>Valeur assurée du bateau</FieldLabel>
+            <input
+              value={legalite.assurance.valeurAssuree}
+              onChange={(e) => patchAssurance({ valeurAssuree: e.target.value })}
+              className={inputBase()}
+              placeholder="Ex: 120000"
+              inputMode="numeric"
+            />
+          </label>
+          <LegalRenewalDateField
+            value={legalite.assurance.dateFin}
+            onChange={(dateFin) => patchAssurance({ dateFin })}
+          />
+          <label className="flex gap-3 items-center px-3 py-3 bg-white rounded-2xl border shadow-sm border-zinc-200/80 sm:col-span-2">
+            <span className="inline-flex relative justify-center items-center w-5 h-5 shrink-0">
+              <input
+                type="checkbox"
+                checked={Boolean(legalite.assurance.locationCouverte)}
+                onChange={() => patchAssurance({ locationCouverte: !legalite.assurance.locationCouverte })}
+                className="sr-only peer"
+              />
+              <span className="h-5 w-5 rounded-full border border-zinc-300 bg-white shadow-sm transition-colors peer-checked:border-[#416B9F] peer-checked:bg-[#416B9F]" />
+              <span className="pointer-events-none absolute text-[12px] font-black leading-none text-white opacity-0 transition-opacity peer-checked:opacity-100">
+                ✓
+              </span>
+            </span>
+            <span className="text-sm font-semibold text-zinc-800">Je suis assuré pour l’activité de location</span>
+          </label>
+          <BoatLegalDocumentFile
+            label="Assurance"
+            fileUrl={legalite.assurance.fileUrl}
+            downloadBasename="assurance-bateau"
+            boatId={boatId}
+            docKey="assurance"
+            onChange={(fileUrl) => patchAssurance({ fileUrl })}
+            inputClassName={inputBase()}
+          />
+        </div>
+      </section>
+
+      <LegalDocumentCard
+        title="Contrat de gestion"
+        description="Convention entre le propriétaire et la base / le gestionnaire nautique."
+        doc={legalite.contratGestion}
+        onChange={(patch) => patchDoc('contratGestion', patch)}
+        downloadBasename="contrat-gestion-bateau"
+        boatId={boatId}
+        docKey="contratGestion"
+        organismeLabel="Gestionnaire / base"
+        numeroLabel="N° de contrat"
+      />
+
+      <LegalDocumentCard
+        title="Carte de circulation / enregistrement"
+        description="Titre d’identification du bateau (carte de circulation maritime ou certificat d’immatriculation)."
+        doc={legalite.carteCirculation}
+        onChange={(patch) => patchDoc('carteCirculation', patch)}
+        downloadBasename="carte-circulation-bateau"
+        boatId={boatId}
+        docKey="carteCirculation"
+        organismeLabel="Autorité d’enregistrement"
+        numeroLabel="N° de carte / immatriculation"
+      />
+
+      <LegalDocumentCard
+        title="Annexe 240"
+        description="Document réglementaire lié à l’exploitation commerciale du navire."
+        doc={legalite.annexe240}
+        onChange={(patch) => patchDoc('annexe240', patch)}
+        downloadBasename="annexe-240-bateau"
+        boatId={boatId}
+        docKey="annexe240"
+        organismeLabel="Organisme délivrant"
+        numeroLabel="N° d’annexe"
+      />
+    </div>
+  );
+}
+
 function boatExtraDetailRows(boat: Boat): { label: string; value: string }[] {
   const d = boat.details;
   const rows: { label: string; value: string }[] = [];
@@ -533,11 +788,30 @@ function boatExtraDetailRows(boat: Boat): { label: string; value: string }[] {
   push('Eau douce', d.equipements.waterCapacityL ? `${d.equipements.waterCapacityL} L` : '');
   push('Batteries', d.equipements.batteryCount);
   push('Guindeau', windlassLabel(d.equipements.windlassType));
-  push('Assureur', d.assurance.assureurActuel);
-  push('N° contrat', d.assurance.numeroContrat);
-  push('Franchise', d.assurance.montantFranchise);
-  push('Valeur assurée', d.assurance.valeurAssuree);
-  if (d.assurance.locationCouverte) rows.push({ label: 'Assurance', value: 'Location couverte' });
+  const pushLegal = (title: string, doc: BoatLegalDocument, extra?: string) => {
+    const parts = [
+      doc.organisme,
+      doc.numero,
+      extra,
+      doc.dateFin ? `fin ${formatLegalRenewalDate(doc.dateFin)}` : '',
+      doc.fileUrl ? 'fichier joint' : '',
+    ]
+      .map((v) => (v ?? '').trim())
+      .filter(Boolean);
+    if (parts.length) rows.push({ label: title, value: parts.join(' · ') });
+  };
+  const a = d.legalite.assurance;
+  const assuranceExtra = [
+    a.montantFranchise ? `franchise ${a.montantFranchise}` : '',
+    a.valeurAssuree ? `valeur ${a.valeurAssuree}` : '',
+    a.locationCouverte ? 'location couverte' : '',
+  ]
+    .filter(Boolean)
+    .join(', ');
+  pushLegal('Assurance', a, assuranceExtra || undefined);
+  pushLegal('Contrat de gestion', d.legalite.contratGestion);
+  pushLegal('Carte de circulation', d.legalite.carteCirculation);
+  pushLegal('Annexe 240', d.legalite.annexe240);
   return rows;
 }
 
@@ -627,7 +901,7 @@ function EquipmentChecklist(props: Readonly<{
 }
 
 function ExtraInfoPanel(props: ExtraInfoPanelProps) {
-  const { tab, setTab, boatName, setBoatName, brand, setBrand, model, setModel, extra, setExtra } = props;
+  const { tab, setTab, boatName, setBoatName, brand, setBrand, model, setModel, extra, setExtra, boatId } = props;
   return (
     <div className="p-4 bg-white rounded-2xl border shadow-sm border-zinc-200/90">
       <p className="text-xs font-semibold tracking-wide uppercase text-zinc-500">Informations supplémentaires</p>
@@ -641,7 +915,7 @@ function ExtraInfoPanel(props: ExtraInfoPanelProps) {
           { k: 'dimensions', label: 'Dimensions' },
           { k: 'motorisation', label: 'Motorisation' },
           { k: 'equipements', label: 'Équipements' },
-          { k: 'assurance', label: 'Assurance' },
+          { k: 'legalite', label: 'Légalité' },
         ].map((t) => {
           const active = tab === (t.k as BoatExtraTab);
           return (
@@ -670,7 +944,7 @@ function ExtraInfoPanel(props: ExtraInfoPanelProps) {
               value={boatName}
               onChange={(e) => setBoatName(e.target.value)}
               className={inputBase()}
-              placeholder="Ex: Bleu Calanque I"
+              placeholder="Ex: Azur I"
             />
           </label>
           <label className="block">
@@ -893,75 +1167,12 @@ function ExtraInfoPanel(props: ExtraInfoPanelProps) {
         />
       ) : null}
 
-      {tab === 'assurance' ? (
-        <div className="grid grid-cols-1 gap-4 mt-4 sm:grid-cols-2">
-          <label className="block">
-            <FieldLabel>Assureur actuel</FieldLabel>
-            <input
-              value={extra.assurance.assureurActuel}
-              onChange={(e) =>
-                setExtra((p) => ({ ...p, assurance: { ...p.assurance, assureurActuel: e.target.value } }))
-              }
-              className={inputBase()}
-              placeholder="Ex: AXA"
-            />
-          </label>
-          <label className="block">
-            <FieldLabel>Numéro du contrat</FieldLabel>
-            <input
-              value={extra.assurance.numeroContrat}
-              onChange={(e) =>
-                setExtra((p) => ({ ...p, assurance: { ...p.assurance, numeroContrat: e.target.value } }))
-              }
-              className={inputBase()}
-              placeholder="Ex: POL-12345"
-            />
-          </label>
-          <label className="block">
-            <FieldLabel>Montant de la franchise</FieldLabel>
-            <input
-              value={extra.assurance.montantFranchise}
-              onChange={(e) =>
-                setExtra((p) => ({ ...p, assurance: { ...p.assurance, montantFranchise: e.target.value } }))
-              }
-              className={inputBase()}
-              placeholder="Ex: 1500"
-              inputMode="numeric"
-            />
-          </label>
-          <label className="block">
-            <FieldLabel>Valeur assurée du bateau</FieldLabel>
-            <input
-              value={extra.assurance.valeurAssuree}
-              onChange={(e) =>
-                setExtra((p) => ({ ...p, assurance: { ...p.assurance, valeurAssuree: e.target.value } }))
-              }
-              className={inputBase()}
-              placeholder="Ex: 120000"
-              inputMode="numeric"
-            />
-          </label>
-          <label className="flex gap-3 items-center px-3 py-3 bg-white rounded-2xl border shadow-sm border-zinc-200/80 sm:col-span-2">
-            <span className="inline-flex relative justify-center items-center w-5 h-5 shrink-0">
-              <input
-                type="checkbox"
-                checked={Boolean(extra.assurance.locationCouverte)}
-                onChange={() =>
-                  setExtra((p) => ({
-                    ...p,
-                    assurance: { ...p.assurance, locationCouverte: !p.assurance.locationCouverte },
-                  }))
-                }
-                className="sr-only peer"
-              />
-              <span className="h-5 w-5 rounded-full border border-zinc-300 bg-white shadow-sm transition-colors peer-checked:border-[#416B9F] peer-checked:bg-[#416B9F]" />
-              <span className="pointer-events-none absolute text-[12px] font-black leading-none text-white opacity-0 transition-opacity peer-checked:opacity-100">
-                ✓
-              </span>
-            </span>
-            <span className="text-sm font-semibold text-zinc-800">Je suis assuré pour l’activité de location</span>
-          </label>
-        </div>
+      {tab === 'legalite' ? (
+        <LegaliteTabPanel
+          legalite={extra.legalite}
+          setLegalite={(updater) => setExtra((p) => ({ ...p, legalite: updater(p.legalite) }))}
+          boatId={boatId}
+        />
       ) : null}
     </div>
   );
@@ -1060,7 +1271,7 @@ function BoatEditorModal(props: BoatEditorModalProps) {
               </label>
               <label className="block">
                 <FieldLabel>Nom du bateau</FieldLabel>
-                <input value={name} onChange={(e) => setName(e.target.value)} className={inputBase()} placeholder="Ex: Bleu Calanque I" />
+                <input value={name} onChange={(e) => setName(e.target.value)} className={inputBase()} placeholder="Ex: Azur I" />
               </label>
               <label className="block sm:col-span-2">
                 <FieldLabel>Modèle</FieldLabel>
@@ -1158,6 +1369,7 @@ function BoatEditorModal(props: BoatEditorModalProps) {
                 setModel={setModel}
                 extra={extra}
                 setExtra={setExtra}
+                boatId={editingBoatId}
               />
             ) : null}
 
@@ -1391,7 +1603,7 @@ function BoatsPageView(props: BoatsPageViewProps) {
         steps={[
           <>Créez ou choisissez une <strong className="font-semibold text-zinc-800">flotille</strong> pour organiser le catalogue.</>,
           <>Ajoutez le bateau : marque, modèle, type, passagers, caution et photos de présentation.</>,
-          <>Complétez via <strong className="font-semibold text-zinc-800">Modifier → Voir plus</strong> : dimensions, équipements et assurance.</>,
+          <>Complétez via <strong className="font-semibold text-zinc-800">Modifier → Voir plus</strong> : dimensions, équipements et légalité.</>,
         ]}
       />
 
@@ -1599,8 +1811,8 @@ export function BoatsPage() {
   const [editingBoatId, setEditingBoatId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const [search, setSearch] = useState('');
-  const [selectedFleetId, setSelectedFleetId] = useState<string | null>(null);
+  const [search, setSearch] = usePersistedString('boats.search');
+  const [selectedFleetId, setSelectedFleetId] = usePersistedNullableString('boats.selectedFleetId', null);
 
   useEffect(() => {
     if (selectedFleetId != null && !fleets.some((f) => f.id === selectedFleetId)) {

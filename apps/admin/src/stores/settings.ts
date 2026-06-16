@@ -1,7 +1,12 @@
 import {
+  DEFAULT_COMPANY_ADDRESS_LINE,
+  DEFAULT_COMPANY_CITY,
+  DEFAULT_COMPANY_COUNTRY,
+  DEFAULT_COMPANY_POSTAL_CODE,
   DEFAULT_RENTAL_ARRIVAL_LOCATION,
   DEFAULT_RENTAL_DEPARTURE_LOCATION,
   filterContractRequiredDocuments,
+  DEFAULT_BRAND_NAME,
 } from '@bleu-calanque/shared';
 import { create } from 'zustand';
 import { api } from '@/lib/api';
@@ -76,6 +81,7 @@ export type CompanySettings = {
   contractOperatorSignatureDataUrl: string | null;
   departureLocation: string;
   arrivalLocation: string;
+  contactOpeningHours: string;
 };
 
 export type PartnerLinkedOffering = 'boat_license' | 'fluvial' | 'boat_rental';
@@ -164,19 +170,19 @@ export const DEFAULT_SETTINGS: AdminSettings = {
   },
   publicSite: {
     publicSiteUrl: '',
-    brandName: 'Bleu Calanque',
+    brandName: DEFAULT_BRAND_NAME,
     contactEmail: '',
     contactPhone: '',
-    addressLine: '',
-    city: '',
-    postalCode: '',
-    country: 'France',
+    addressLine: DEFAULT_COMPANY_ADDRESS_LINE,
+    city: DEFAULT_COMPANY_CITY,
+    postalCode: DEFAULT_COMPANY_POSTAL_CODE,
+    country: DEFAULT_COMPANY_COUNTRY,
     departureLocation: DEFAULT_RENTAL_DEPARTURE_LOCATION,
     arrivalLocation: DEFAULT_RENTAL_ARRIVAL_LOCATION,
   },
   company: {
-    legalName: 'Bleu Calanque',
-    tradeName: 'Bleu Calanque',
+    legalName: DEFAULT_BRAND_NAME,
+    tradeName: DEFAULT_BRAND_NAME,
     professionalPhone: '',
     domiciliation: '',
     companyType: '',
@@ -185,20 +191,21 @@ export const DEFAULT_SETTINGS: AdminSettings = {
     rcsRegistration: '',
     nafCode: '',
     shareCapital: '',
-    addressLine: '',
-    city: '',
-    postalCode: '',
-    country: 'France',
+    addressLine: DEFAULT_COMPANY_ADDRESS_LINE,
+    city: DEFAULT_COMPANY_CITY,
+    postalCode: DEFAULT_COMPANY_POSTAL_CODE,
+    country: DEFAULT_COMPANY_COUNTRY,
     contactEmail: '',
     contactPhone: '',
     publicSiteUrl: '',
-    brandName: 'Bleu Calanque',
+    brandName: DEFAULT_BRAND_NAME,
     adsVatRatePercent: 20,
     vatBasePercent: 100,
     vatPercent: 20,
     contractOperatorSignatureDataUrl: null,
     departureLocation: DEFAULT_RENTAL_DEPARTURE_LOCATION,
     arrivalLocation: DEFAULT_RENTAL_ARRIVAL_LOCATION,
+    contactOpeningHours: 'Lundi – vendredi : 9h – 18h\nSamedi : 9h – 12h',
   },
   partners: [],
   contracts: [],
@@ -224,13 +231,13 @@ export const DEFAULT_SETTINGS: AdminSettings = {
     paymentsOnlineEnabled: true,
   },
   emails: {
-    fromName: 'Bleu Calanque',
+    fromName: DEFAULT_BRAND_NAME,
     fromEmail: '',
     replyToEmail: '',
     confirmationsEnabled: true,
   },
   seo: {
-    metaTitle: 'Location bateau — Bleu Calanque',
+    metaTitle: `Location bateau — ${DEFAULT_BRAND_NAME}`,
     metaDescription: 'Réservez votre bateau en quelques clics.',
     ogImageUrl: '',
   },

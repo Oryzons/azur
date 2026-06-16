@@ -11,11 +11,17 @@ const inputCls =
 type Props = Readonly<{
   /** Mot de passe temporaire saisi à la connexion (pré-rempli si disponible). */
   defaultCurrentPassword?: string;
+  variant?: 'owner' | 'admin';
   onSuccess: () => void;
   onUseOtherAccount?: () => void;
 }>;
 
-export function FirstLoginPasswordForm({ defaultCurrentPassword = '', onSuccess, onUseOtherAccount }: Props) {
+export function FirstLoginPasswordForm({
+  defaultCurrentPassword = '',
+  variant = 'owner',
+  onSuccess,
+  onUseOtherAccount,
+}: Props) {
   const user = useAuthStore((s) => s.user);
   const accessToken = useAuthStore((s) => s.accessToken);
   const refreshToken = useAuthStore((s) => s.refreshToken);
@@ -76,8 +82,8 @@ export function FirstLoginPasswordForm({ defaultCurrentPassword = '', onSuccess,
   return (
     <form onSubmit={onSubmit} className="space-y-5">
       <div className="rounded-xl border border-amber-200/90 bg-amber-50 px-3.5 py-2.5 text-sm text-amber-900">
-        Pour des raisons de sécurité, définissez votre mot de passe personnel avant d&apos;accéder à votre espace
-        propriétaire.
+        Pour des raisons de sécurité, définissez votre mot de passe personnel avant d&apos;accéder au{' '}
+        {variant === 'admin' ? 'back-office' : 'espace propriétaire'}.
       </div>
 
       {error ? (
@@ -92,7 +98,7 @@ export function FirstLoginPasswordForm({ defaultCurrentPassword = '', onSuccess,
 
       <div>
         <label htmlFor="first-login-current" className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-          Mot de passe actuel (fourni par Bleu Calanque)
+          Mot de passe actuel (fourni par Azur)
         </label>
         <div className="relative mt-1.5">
           <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" strokeWidth={2} aria-hidden />
@@ -174,7 +180,7 @@ export function FirstLoginPasswordForm({ defaultCurrentPassword = '', onSuccess,
             Enregistrement…
           </>
         ) : (
-          'Enregistrer et accéder à mon espace'
+          variant === 'admin' ? 'Enregistrer et accéder au back-office' : 'Enregistrer et accéder à mon espace'
         )}
       </button>
 

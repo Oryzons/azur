@@ -1,8 +1,11 @@
 import type { Reservation } from '@/pages/calendar/reservationTypes';
+import { reservationPaymentContext } from '@/lib/reservationOfflineDue';
+import type { Extra } from '@/stores/extras';
 import type { Boat } from '@/stores/boats';
 import { BOAT_TYPES_UI } from '@/stores/boats';
 import {
   isReservationCancelled,
+  isReservationFullyPaid,
   resolveReservationStatus,
   statusBadgeClass,
   statusDisplayLabel,
@@ -36,6 +39,18 @@ export function reservationSearchHaystack(
   return `${r.title} ${boatText} ${client} ${status}`.toLowerCase();
 }
 
+/** Recherche propriétaire : bateau et période uniquement (sans données client). */
+export function ownerReservationSearchHaystack(
+  r: Reservation,
+  boat: Boat | undefined,
+  boatNameFallback: string,
+): string {
+  const boatText = boat
+    ? `${boat.name} ${boat.brand} ${boat.model}`.toLowerCase()
+    : boatNameFallback.toLowerCase();
+  return `${boatText} ${reservationPeriodShort(r)}`.toLowerCase();
+}
+
 export function reservationClientLabel(r: Reservation): string | null {
   const d = r.details;
   if (!d?.clientFirstName && !d?.clientLastName) return null;
@@ -47,11 +62,17 @@ export function reservationStatusForList(r: Reservation): ReservationStatus {
   return resolveReservationStatus(r.details);
 }
 
-export function reservationStatusBadge(r: Reservation): { label: string; className: string } {
+export function reservationStatusBadge(
+  r: Reservation,
+  extrasCatalog?: readonly Extra[],
+): { label: string; className: string } {
   const status = reservationStatusForList(r);
+  const ctx = extrasCatalog
+    ? reservationPaymentContext(r, extrasCatalog)
+    : { installmentPlan: r.installmentPlan };
   return {
-    label: statusDisplayLabel(status, r.details),
-    className: statusBadgeClass(status, r.details),
+    label: statusDisplayLabel(status, r.details, ctx),
+    className: statusBadgeClass(status, r.details, ctx),
   };
 }
 
@@ -74,7 +95,10 @@ export function matchesReservationListFilter(
     case 'pending_payment':
       return status === 'pending_payment' && !isReservationCancelled(r.details);
     case 'paid':
-      return status === 'reserved_paid' && Boolean(r.details?.paymentCapturedAt);
+      return (
+        status === 'reserved_paid' &&
+        isReservationFullyPaid({ installmentPlan: r.installmentPlan }, r.details)
+      );
     case 'cancelled':
       return isReservationCancelled(r.details) || status === 'cancelled';
     default:

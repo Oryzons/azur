@@ -12,6 +12,7 @@ import {
 import type { StoredReservation } from '@/stores/reservations';
 import { useReservationsStore } from '@/stores/reservations';
 import { useBoatsStore } from '@/stores/boats';
+import { useUnavailabilitiesStore } from '@/stores/unavailabilities';
 
 export type AppNotification = {
   id: string;
@@ -43,7 +44,11 @@ type ServerNotificationRow = {
     | 'RESERVATION_PARTIAL_REFUND'
     | 'RESERVATION_DELETED'
     | 'RESERVATION_PAID'
-    | 'RENTAL_CONTRACT_SIGNED';
+    | 'RENTAL_CONTRACT_SIGNED'
+    | 'RESERVATION_ON_OWNER_BOAT'
+    | 'UNAVAILABILITY_CREATED'
+    | 'UNAVAILABILITY_UPDATED'
+    | 'UNAVAILABILITY_DELETED';
   title: string;
   message: string;
   reservationId: string;
@@ -224,6 +229,7 @@ export const useNotificationsStore = create<NotificationsState>()(
 
       async pollServerNotifications() {
         let shouldRefreshReservations = false;
+        let shouldRefreshUnavailabilities = false;
 
         const now = Date.now();
         if (now - lastStripeSyncAt >= STRIPE_SYNC_INTERVAL_MS) {
@@ -260,14 +266,25 @@ export const useNotificationsStore = create<NotificationsState>()(
             'RESERVATION_REFUNDED',
             'RESERVATION_PARTIAL_REFUND',
             'RESERVATION_DELETED',
+            'RESERVATION_ON_OWNER_BOAT',
             'CHECK_IN_DONE',
             'CHECK_OUT_DONE',
+          ]);
+
+          const unavailabilityRefreshKinds = new Set([
+            'UNAVAILABILITY_CREATED',
+            'UNAVAILABILITY_UPDATED',
+            'UNAVAILABILITY_DELETED',
           ]);
 
           for (const row of rows) {
             if (reservationRefreshKinds.has(row.kind) && !handledPaymentNotificationIds.has(row.id)) {
               handledPaymentNotificationIds.add(row.id);
               shouldRefreshReservations = true;
+            }
+            if (unavailabilityRefreshKinds.has(row.kind) && !handledPaymentNotificationIds.has(row.id)) {
+              handledPaymentNotificationIds.add(row.id);
+              shouldRefreshUnavailabilities = true;
             }
             if (!row.read && !toastedServerIds.has(row.id)) {
               toastedServerIds.add(row.id);
@@ -279,6 +296,9 @@ export const useNotificationsStore = create<NotificationsState>()(
 
           if (shouldRefreshReservations) {
             void useReservationsStore.getState().refresh();
+          }
+          if (shouldRefreshUnavailabilities) {
+            void useUnavailabilitiesStore.getState().refresh();
           }
 
           set((s) => {

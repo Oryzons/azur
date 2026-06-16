@@ -1,7 +1,13 @@
 import {
+  DEFAULT_BRAND_NAME,
+  DEFAULT_COMPANY_ADDRESS_LINE,
+  DEFAULT_COMPANY_CITY,
+  DEFAULT_COMPANY_COUNTRY,
+  DEFAULT_COMPANY_POSTAL_CODE,
   DEFAULT_RENTAL_ARRIVAL_LOCATION,
   DEFAULT_RENTAL_DEPARTURE_LOCATION,
   filterContractRequiredDocuments,
+  signatureDataUrlSchema,
 } from '@bleu-calanque/shared';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { parseRequiredDocuments } from '../rental-contracts/rental-contract-field-resolvers';
@@ -10,6 +16,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit/audit.service';
 import { AuditAction, AuditEntity } from '../common/audit/audit.constants';
 import { entityIdNameSnapshot } from '../common/audit/audit-snapshots';
+import { SecureMediaService } from '../common/media/secure-media.service';
+import { validateInput } from '../common/validation/validate-input';
 import type {
   BankSettingsDto,
   BookingSettingsDto,
@@ -49,8 +57,8 @@ const SEO_ID = 'seo_settings';
 const NAUTIC_ID = 'nautic_manager_settings';
 
 const COMPANY_DEFAULTS = {
-  legalName: 'Bleu Calanque',
-  tradeName: 'Bleu Calanque',
+  legalName: DEFAULT_BRAND_NAME,
+  tradeName: DEFAULT_BRAND_NAME,
   professionalPhone: '',
   domiciliation: '',
   companyType: '',
@@ -59,19 +67,35 @@ const COMPANY_DEFAULTS = {
   rcsRegistration: '',
   nafCode: '',
   shareCapital: '',
-  addressLine: '',
-  city: '',
-  postalCode: '',
-  country: 'France',
+  addressLine: DEFAULT_COMPANY_ADDRESS_LINE,
+  city: DEFAULT_COMPANY_CITY,
+  postalCode: DEFAULT_COMPANY_POSTAL_CODE,
+  country: DEFAULT_COMPANY_COUNTRY,
   contactEmail: '',
   contactPhone: '',
   publicSiteUrl: '',
-  brandName: 'Bleu Calanque',
+  brandName: DEFAULT_BRAND_NAME,
   adsVatRatePercent: 20,
   vatBasePercent: 100,
   vatPercent: 20,
   departureLocation: DEFAULT_RENTAL_DEPARTURE_LOCATION,
   arrivalLocation: DEFAULT_RENTAL_ARRIVAL_LOCATION,
+  contactOpeningHours: 'Lundi – vendredi : 9h – 18h\nSamedi : 9h – 12h',
+};
+
+export type OwnerContactInfo = {
+  brandName: string;
+  legalName: string;
+  contactEmail: string | null;
+  contactPhone: string | null;
+  professionalPhone: string | null;
+  addressLine: string | null;
+  postalCode: string | null;
+  city: string | null;
+  country: string | null;
+  addressFormatted: string | null;
+  publicSiteUrl: string | null;
+  openingHours: string | null;
 };
 
 const BANK_DEFAULTS = { accountHolder: '', iban: '', bic: '', bankName: '' };
@@ -99,7 +123,7 @@ const BOOKING_DEFAULTS = {
 };
 
 const EMAIL_DEFAULTS = {
-  fromName: 'Bleu Calanque',
+  fromName: DEFAULT_BRAND_NAME,
   fromEmail: '',
   replyToEmail: '',
   confirmationsEnabled: true,
@@ -107,19 +131,19 @@ const EMAIL_DEFAULTS = {
 
 const PUBLIC_SITE_DEFAULTS = {
   publicSiteUrl: '',
-  brandName: 'Bleu Calanque',
+  brandName: DEFAULT_BRAND_NAME,
   contactEmail: '',
   contactPhone: '',
-  addressLine: '',
-  city: '',
-  postalCode: '',
-  country: 'France',
+  addressLine: DEFAULT_COMPANY_ADDRESS_LINE,
+  city: DEFAULT_COMPANY_CITY,
+  postalCode: DEFAULT_COMPANY_POSTAL_CODE,
+  country: DEFAULT_COMPANY_COUNTRY,
   departureLocation: DEFAULT_RENTAL_DEPARTURE_LOCATION,
   arrivalLocation: DEFAULT_RENTAL_ARRIVAL_LOCATION,
 };
 
 const SEO_DEFAULTS = {
-  metaTitle: 'Location bateau — Bleu Calanque',
+  metaTitle: `Location bateau — ${DEFAULT_BRAND_NAME}`,
   metaDescription: 'Réservez votre bateau en quelques clics.',
   ogImageUrl: '',
 };
@@ -139,6 +163,7 @@ export class SettingsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly media: SecureMediaService,
   ) {}
 
   async getAll() {
@@ -214,13 +239,77 @@ export class SettingsService {
     return this.getAll();
   }
 
+  async getOwnerContact(): Promise<OwnerContactInfo> {
+    const row = await this.prisma.companySettings.findUnique({ where: { id: COMPANY_ID } });
+    const c = row ?? { id: COMPANY_ID, ...COMPANY_DEFAULTS, updatedAt: new Date() };
+    const contactPhone = (c.contactPhone || c.professionalPhone || '').trim();
+    const professionalPhone = (c.professionalPhone || '').trim();
+    const addressParts = [
+      c.addressLine?.trim(),
+      [c.postalCode?.trim(), c.city?.trim()].filter(Boolean).join(' '),
+      c.country?.trim(),
+    ].filter(Boolean) as string[];
+    const openingHours = (c.contactOpeningHours || '').trim();
+    return {
+      brandName: (c.brandName || c.tradeName || DEFAULT_BRAND_NAME).trim(),
+      legalName: (c.legalName || '').trim(),
+      contactEmail: c.contactEmail?.trim() || null,
+      contactPhone: contactPhone || null,
+      professionalPhone: professionalPhone || null,
+      addressLine: c.addressLine?.trim() || null,
+      postalCode: c.postalCode?.trim() || null,
+      city: c.city?.trim() || null,
+      country: c.country?.trim() || null,
+      addressFormatted: addressParts.length ? addressParts.join('\n') : null,
+      publicSiteUrl: c.publicSiteUrl?.trim() || null,
+      openingHours: openingHours || null,
+    };
+  }
+
   private async upsertCompany(c: CompanySettingsDto) {
-    const data = { ...COMPANY_DEFAULTS, ...stripUndefined(c) };
+    const existing = await this.prisma.companySettings.findUnique({ where: { id: COMPANY_ID } });
+    const patch = stripUndefined(c);
+    if (c.contractOperatorSignatureDataUrl !== undefined) {
+      patch.contractOperatorSignatureDataUrl = await this.processOperatorSignatureUrl(
+        c.contractOperatorSignatureDataUrl,
+        existing?.contractOperatorSignatureDataUrl,
+      );
+    }
+    const data = { ...COMPANY_DEFAULTS, ...patch };
     await this.prisma.companySettings.upsert({
       where: { id: COMPANY_ID },
       create: { id: COMPANY_ID, ...data },
-      update: stripUndefined(c),
+      update: patch,
     });
+  }
+
+  /** Valide et stocke la signature exploitant (PNG canvas → image compressée). */
+  private async processOperatorSignatureUrl(
+    incoming: string | null | undefined,
+    existingUrl: string | null | undefined,
+  ): Promise<string | null> {
+    if (incoming == null || !incoming.trim()) return null;
+    const trimmed = incoming.trim();
+    validateInput(signatureDataUrlSchema, trimmed);
+    const kept = existingUrl?.trim() ?? '';
+    if (trimmed === kept && (trimmed.startsWith('https://') || trimmed.startsWith('data:image/'))) {
+      return trimmed;
+    }
+    return (await this.media.processOptionalImageUrl(trimmed)) ?? null;
+  }
+
+  /** Logo partenaire : compression + stockage sécurisé. */
+  private async processPartnerLogoUrl(
+    incoming: string | null | undefined,
+    existingUrl: string | null | undefined,
+  ): Promise<string | null> {
+    if (incoming == null || !incoming.trim()) return null;
+    const trimmed = incoming.trim();
+    const kept = existingUrl?.trim() ?? '';
+    if (trimmed === kept && (trimmed.startsWith('https://') || trimmed.startsWith('data:image/'))) {
+      return trimmed;
+    }
+    return (await this.media.processOptionalImageUrl(trimmed)) ?? null;
   }
   private async upsertBank(b: BankSettingsDto) {
     const data = { ...BANK_DEFAULTS, ...stripUndefined(b) };
@@ -288,13 +377,14 @@ export class SettingsService {
     if (!name) throw new BadRequestException('Nom requis.');
     const kind = (input.kind as PartnerKind | undefined) ?? PartnerKind.OTHER;
     const linkedOfferingsJson = toLinkedOfferingsJson(input.linkedOfferings);
+    const logoUrl = await this.processPartnerLogoUrl(input.logoUrl, null);
     const partner = await this.prisma.partner.create({
       data: {
         name,
         kind,
         linkedOfferingsJson,
         description: input.description ?? '',
-        logoUrl: input.logoUrl ?? '',
+        logoUrl: logoUrl ?? '',
         price: input.price ?? '',
         active: input.active ?? true,
         contactName: input.contactName ?? '',
@@ -309,6 +399,10 @@ export class SettingsService {
   async updatePartner(id: string, input: UpdatePartnerDto) {
     const existing = await this.prisma.partner.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('Partenaire introuvable.');
+    const logoUrl =
+      input.logoUrl !== undefined
+        ? await this.processPartnerLogoUrl(input.logoUrl, existing.logoUrl)
+        : existing.logoUrl;
     const partner = await this.prisma.partner.update({
       where: { id },
       data: {
@@ -319,7 +413,7 @@ export class SettingsService {
             ? toLinkedOfferingsJson(input.linkedOfferings)
             : existing.linkedOfferingsJson,
         description: input.description !== undefined ? input.description : existing.description,
-        logoUrl: input.logoUrl !== undefined ? input.logoUrl : existing.logoUrl,
+        logoUrl: logoUrl ?? '',
         price: input.price !== undefined ? input.price : existing.price,
         contactName: input.contactName !== undefined ? input.contactName : existing.contactName,
         contactEmail: input.contactEmail !== undefined ? input.contactEmail : existing.contactEmail,
@@ -359,7 +453,7 @@ export class SettingsService {
 
   async getDefaultContractTemplateTexts() {
     const company = await this.prisma.companySettings.findUnique({ where: { id: 'company_settings' } });
-    const brand = company?.brandName ?? 'Bleu Calanque';
+    const brand = company?.brandName ?? DEFAULT_BRAND_NAME;
     const { serializeDefaultTermsForTemplate } = await import(
       '../rental-contracts/rental-contract-default-terms'
     );
@@ -381,7 +475,7 @@ export class SettingsService {
     }
 
     return this.updateContract(id, {
-      name: existing.name === 'Nouveau contrat' ? 'Contrat location Bleu Calanque' : existing.name,
+      name: existing.name === 'Nouveau contrat' ? `Contrat location ${DEFAULT_BRAND_NAME}` : existing.name,
       title: existing.title?.trim() ? existing.title : 'Contrat de location',
       description: defaults.description,
       cancellationTerms: defaults.cancellationTerms,

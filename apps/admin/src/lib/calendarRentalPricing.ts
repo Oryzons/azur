@@ -32,7 +32,7 @@ export type CatalogPriceBreakdown = {
   season: PricingSeasonCode;
 };
 
-function parseSlotBounds(dateIso: string, startTime: string, endTime: string): { start: Date; end: Date } | null {
+export function parseSlotBounds(dateIso: string, startTime: string, endTime: string): { start: Date; end: Date } | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateIso.trim())) return null;
   const [sh, sm] = startTime.split(':').map(Number);
   const [eh, em] = endTime.split(':').map(Number);
@@ -44,6 +44,16 @@ function parseSlotBounds(dateIso: string, startTime: string, endTime: string): {
   end.setHours(eh, em, 0, 0);
   if (end.getTime() <= start.getTime()) end.setDate(end.getDate() + 1);
   return { start, end };
+}
+
+export function slotRangeIso(
+  dateIso: string,
+  startTime: string,
+  endTime: string,
+): { start: string; end: string } | null {
+  const bounds = parseSlotBounds(dateIso, startTime, endTime);
+  if (!bounds) return null;
+  return { start: bounds.start.toISOString(), end: bounds.end.toISOString() };
 }
 
 /**

@@ -1,16 +1,12 @@
 import { CouponDiscountKind } from '@prisma/client';
-import { computeExtrasTotalCents, rentalDaysBetween } from '@bleu-calanque/shared';
-import type { ExtraLineForPricing } from '@bleu-calanque/shared';
+import {
+  computeExtrasTotalCents,
+  rentalDaysBetween,
+  seasonYearForAprilSeptember,
+  type ExtraLineForPricing,
+} from '@bleu-calanque/shared';
 
-export function isDateInAprilSeptemberSeason(d: Date) {
-  const m = d.getMonth();
-  return m >= 3 && m <= 8;
-}
-
-export function seasonYearForAprilSeptember(d: Date): number | null {
-  if (!isDateInAprilSeptemberSeason(d)) return null;
-  return d.getFullYear();
-}
+export { isDateInAprilSeptemberSeason, seasonYearForAprilSeptember } from '@bleu-calanque/shared';
 
 export function clientKeyFromReservation(r: {
   clientMemberId: string | null;

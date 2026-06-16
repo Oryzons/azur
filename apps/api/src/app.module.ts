@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { join } from 'node:path';
 import { validateEnv } from './config/env';
 import { PrismaModule } from './prisma/prisma.module';
@@ -29,6 +31,18 @@ import { RentalContractsModule } from './rental-contracts/rental-contracts.modul
       envFilePath: join(__dirname, '..', '.env'),
       validate: validateEnv,
     }),
+    ThrottlerModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        throttlers: [
+          {
+            ttl: config.get<number>('THROTTLE_TTL_MS', 60_000),
+            limit: config.get<number>('THROTTLE_LIMIT', 120),
+          },
+        ],
+      }),
+    }),
     AuditModule,
     MediaModule,
     PrismaModule,
@@ -48,6 +62,12 @@ import { RentalContractsModule } from './rental-contracts/rental-contracts.modul
     NotificationsModule,
     RentalContractsModule,
     CheckFlowModule,
+  ],
+  providers: [
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
   ],
 })
 export class AppModule {}

@@ -25,7 +25,7 @@ export function UnavailabilityPill(props: Readonly<{
         onClick?.();
       }}
     >
-      <span className="truncate">{label}</span>
+      <span className="block w-full min-w-0 truncate text-left">{label}</span>
     </button>
   );
 }

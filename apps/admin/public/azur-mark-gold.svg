@@ -1,0 +1,7 @@
+<svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" fill="none" aria-label="Azur" shape-rendering="geometricPrecision">
+  <rect x="0" y="0" width="48" height="48" rx="13" fill="#1B4068"/>
+  <g fill="none" stroke="#DDB872" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 20 C 14 14 19 14 24 20 C 29 26 34 26 39 20" stroke-width="2.6" opacity="0.6"/>
+    <path d="M9 28 C 14 22 19 22 24 28 C 29 34 34 34 39 28" stroke-width="3.4"/>
+  </g>
+</svg>

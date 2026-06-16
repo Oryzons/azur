@@ -1,4 +1,5 @@
 import { BadRequestException, Controller, Get, NotFoundException, Query } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { Public } from '../common/decorators/public.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { RentalContractsService } from '../rental-contracts/rental-contracts.service';
@@ -6,6 +7,7 @@ import { ReservationNotificationsService } from './reservation-notifications.ser
 import { StripePaymentsService } from './stripe-payments.service';
 
 @Controller('public/payments')
+@Throttle({ default: { limit: 40, ttl: 60_000 } })
 export class PublicPaymentsController {
   constructor(
     private readonly prisma: PrismaService,

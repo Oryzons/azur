@@ -1,7 +1,20 @@
-import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Res,
+} from '@nestjs/common';
+import type { Response } from 'express';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { DeskOnly, ReservationsRead } from '../common/decorators/role-groups.decorator';
 import type { AuthUser } from '@bleu-calanque/shared';
+import { isBoatLegalDocKey } from './boat-details-media';
 import { CatalogService } from './catalog.service';
 import { CreateBoatDto, CreateFleetDto, PatchBoatDepositDto, UpdateBoatDto, UpdateFleetDto } from './dto';
 
@@ -61,5 +74,22 @@ export class CatalogController {
   @DeskOnly()
   deleteBoat(@Param('id', ParseUUIDPipe) id: string) {
     return this.catalog.deleteBoat(id);
+  }
+
+  @Get('boats/:id/legal-docs/:docKey/download')
+  @ReservationsRead()
+  async downloadBoatLegalDocument(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('docKey') docKey: string,
+    @CurrentUser() user: AuthUser,
+    @Res() res: Response,
+  ) {
+    if (!isBoatLegalDocKey(docKey)) {
+      throw new BadRequestException('Type de document invalide.');
+    }
+    const { buffer, mimeType, filename } = await this.catalog.downloadBoatLegalDocument(id, docKey, user);
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
   }
 }

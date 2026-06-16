@@ -15,14 +15,17 @@ import { useCoreStoresReady } from '@/lib/useStoreHydration';
 import { useOwnerFleetScope } from '@/lib/ownerFleetScope';
 import { isOwnerUser } from '@/lib/userRoles';
 import { useAuthStore } from '@/stores/auth';
+import { useExtrasStore } from '@/stores/extras';
 import {
   matchesReservationListFilter,
+  ownerReservationSearchHaystack,
   reservationClientLabel,
   reservationPeriodShort,
   reservationSearchHaystack,
   reservationStatusBadge,
   type ReservationListFilter,
 } from '@/lib/reservationUi';
+import { usePersistedEnum, usePersistedString } from '@/lib/pageFilterStorage';
 
 type BoatRow = { id: string; name: string; meta?: string };
 
@@ -50,6 +53,12 @@ const LIST_FILTERS: { id: ReservationListFilter; label: string }[] = [
   { id: 'cancelled', label: 'Annulées' },
 ];
 
+const OWNER_LIST_FILTERS: { id: ReservationListFilter; label: string }[] = [
+  { id: 'all', label: 'Toutes' },
+  { id: 'upcoming', label: 'À venir' },
+  { id: 'past', label: 'Passées' },
+];
+
 export function ReservationsPage() {
   const navigate = useNavigate();
   const isOwner = isOwnerUser(useAuthStore((s) => s.user.role));
@@ -64,14 +73,23 @@ export function ReservationsPage() {
   const reservationsHydrated = useReservationsStore((s) => s.hydrated);
   const refreshReservations = useReservationsStore((s) => s.refresh);
   const coreReady = useCoreStoresReady();
+  const extrasCatalog = useExtrasStore((s) => s.extras);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [listSearch, setListSearch] = useState('');
-  const [listFilter, setListFilter] = useState<ReservationListFilter>('all');
-  const [filterQuery, setFilterQuery] = useState('');
-  const [filterBoatId, setFilterBoatId] = useState('');
-  const [filterBoatType, setFilterBoatType] = useState<'' | BoatType>('');
-  const [filterDateFrom, setFilterDateFrom] = useState('');
-  const [filterDateTo, setFilterDateTo] = useState('');
+  const [listSearch, setListSearch] = usePersistedString('reservations.listSearch');
+  const [listFilter, setListFilter] = usePersistedEnum<ReservationListFilter>(
+    'reservations.listFilter',
+    'all',
+    ['all', 'upcoming', 'past', 'pending_payment', 'paid', 'cancelled'],
+  );
+  const [filterQuery, setFilterQuery] = usePersistedString('reservations.filterQuery');
+  const [filterBoatId, setFilterBoatId] = usePersistedString('reservations.filterBoatId');
+  const [filterBoatType, setFilterBoatType] = usePersistedEnum<'' | BoatType>(
+    'reservations.filterBoatType',
+    '',
+    ['', ...BOAT_TYPES_UI.map((t) => t.value)],
+  );
+  const [filterDateFrom, setFilterDateFrom] = usePersistedString('reservations.filterDateFrom');
+  const [filterDateTo, setFilterDateTo] = usePersistedString('reservations.filterDateTo');
 
   useEffect(() => {
     if (!reservationsHydrated) void refreshReservations();
@@ -123,7 +141,10 @@ export function ReservationsPage() {
     if (panelQ) {
       rows = rows.filter((r) => {
         const boat = boatById.get(r.boatId);
-        return reservationSearchHaystack(r, boat, boatLabel(r.boatId)).includes(panelQ);
+        const haystack = isOwner
+          ? ownerReservationSearchHaystack(r, boat, boatLabel(r.boatId))
+          : reservationSearchHaystack(r, boat, boatLabel(r.boatId));
+        return haystack.includes(panelQ);
       });
     }
 
@@ -138,7 +159,10 @@ export function ReservationsPage() {
     if (q) {
       rows = rows.filter((r) => {
         const boat = boatById.get(r.boatId);
-        return reservationSearchHaystack(r, boat, boatLabel(r.boatId)).includes(q);
+        const haystack = isOwner
+          ? ownerReservationSearchHaystack(r, boat, boatLabel(r.boatId))
+          : reservationSearchHaystack(r, boat, boatLabel(r.boatId));
+        return haystack.includes(q);
       });
     }
 
@@ -154,6 +178,7 @@ export function ReservationsPage() {
     listSearch,
     boatById,
     boats,
+    isOwner,
   ]);
 
   useEffect(() => {
@@ -169,8 +194,8 @@ export function ReservationsPage() {
   const now = new Date();
   const stats = useMemo(() => {
     const upcoming = list.filter((r) => r.end.getTime() >= now.getTime());
-    const paid = list.filter((r) => reservationStatusBadge(r).label === 'Payée');
-    const pending = list.filter((r) => reservationStatusBadge(r).label === 'En attente de paiement');
+    const paid = list.filter((r) => reservationStatusBadge(r, extrasCatalog).label === 'Payée');
+    const pending = list.filter((r) => reservationStatusBadge(r, extrasCatalog).label === 'En attente de paiement');
     return {
       total: list.length,
       upcoming: upcoming.length,
@@ -316,12 +341,17 @@ export function ReservationsPage() {
     <ContentReveal ready={coreReady} skeleton={<ReservationsPageSkeleton />}>
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-900">Réservations</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-zinc-900">
+            {isOwner ? 'Mes réservations' : 'Réservations'}
+          </h1>
           <p className="mt-2 max-w-2xl text-[15px] leading-relaxed text-zinc-500">
-            Toutes les locations créées depuis le calendrier — fiche détaillée, statuts, paiements et check-in / check-out.
+            {isOwner
+              ? 'Locations sur vos bateaux — date et horaires uniquement (consultation, sans modification).'
+              : 'Toutes les locations créées depuis le calendrier — fiche détaillée, statuts, paiements et check-in / check-out.'}
           </p>
         </div>
 
+        {!isOwner ? (
         <ThreeStepGuide
           guideKey="reservations"
           title="Gérer une réservation en 3 étapes"
@@ -339,6 +369,7 @@ export function ReservationsPage() {
             </>,
           ]}
         />
+        ) : null}
 
         <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-600">
           <span className="rounded-xl border border-zinc-200/90 bg-white px-3 py-2 shadow-sm">
@@ -347,14 +378,18 @@ export function ReservationsPage() {
           <span className="rounded-xl border border-emerald-200/80 bg-emerald-50/60 px-3 py-2">
             <span className="font-semibold text-emerald-800">{stats.upcoming}</span> à venir
           </span>
-          <span className="rounded-xl border border-zinc-200/90 bg-white px-3 py-2 shadow-sm">
-            <span className="font-semibold text-zinc-800">{stats.paid}</span> payée{stats.paid !== 1 ? 's' : ''}
-          </span>
-          <span className="rounded-xl border border-orange-200/80 bg-orange-50/60 px-3 py-2">
-            <span className="font-semibold text-orange-800">{stats.pending}</span> en attente
-          </span>
+          {!isOwner ? (
+            <>
+              <span className="rounded-xl border border-zinc-200/90 bg-white px-3 py-2 shadow-sm">
+                <span className="font-semibold text-zinc-800">{stats.paid}</span> payée{stats.paid !== 1 ? 's' : ''}
+              </span>
+              <span className="rounded-xl border border-orange-200/80 bg-orange-50/60 px-3 py-2">
+                <span className="font-semibold text-orange-800">{stats.pending}</span> en attente
+              </span>
+            </>
+          ) : null}
           <div className="ml-auto flex flex-wrap gap-2">
-            {list.length > 0 ? (
+            {!isOwner && list.length > 0 ? (
               <button
                 type="button"
                 onClick={() => {
@@ -373,26 +408,26 @@ export function ReservationsPage() {
               to="/calendrier"
               className="inline-flex items-center gap-2 rounded-xl bg-[#416B9F] px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#365b87]"
             >
-              <Plus className="h-4 w-4" />
-              Calendrier
+              {isOwner ? <Calendar className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+              {isOwner ? 'Calendrier' : 'Calendrier'}
             </Link>
           </div>
         </div>
 
         <div className="grid gap-4 lg:grid-cols-12">
-          <div className="space-y-3 lg:col-span-4">
+          <div className="space-y-3 lg:col-span-4" data-tour={isOwner ? 'owner-reservations-list' : 'admin-reservations-list'}>
             <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
               <input
                 type="search"
                 value={listSearch}
                 onChange={(e) => setListSearch(e.target.value)}
-                placeholder="Rechercher une réservation…"
+                placeholder={isOwner ? 'Rechercher par bateau ou date…' : 'Rechercher une réservation…'}
                 className="w-full rounded-xl border border-zinc-200/90 bg-white py-2.5 pl-9 pr-3 text-sm shadow-sm outline-none focus:border-[#416B9F]/60 focus:ring-2 focus:ring-[#416B9F]/15"
               />
             </div>
             <div className="flex flex-wrap gap-1.5">
-              {LIST_FILTERS.map((f) => (
+              {(isOwner ? OWNER_LIST_FILTERS : LIST_FILTERS).map((f) => (
                 <button
                   key={f.id}
                   type="button"
@@ -430,7 +465,7 @@ export function ReservationsPage() {
               ) : (
                 listFiltered.map((r) => {
                   const active = r.id === selectedId;
-                  const badge = reservationStatusBadge(r);
+                  const badge = reservationStatusBadge(r, extrasCatalog);
                   const client = reservationClientLabel(r);
                   const upcoming = r.end.getTime() >= now.getTime();
                   return (
@@ -453,37 +488,49 @@ export function ReservationsPage() {
                         aria-hidden
                       />
                       <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <p className="truncate text-sm font-semibold text-zinc-900">{r.title}</p>
-                          <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${badge.className}`}>
-                            {badge.label}
-                          </span>
-                        </div>
-                        {client ? <p className="mt-0.5 truncate text-[11px] text-zinc-600">{client}</p> : null}
-                        <p className="mt-1 text-[11px] text-zinc-500">{reservationPeriodShort(r)}</p>
-                        <p className="mt-0.5 flex items-center gap-1 text-[11px] text-zinc-400">
-                          <Ship className="h-3 w-3 shrink-0" aria-hidden />
-                          {boatLabel(r.boatId)}
-                        </p>
-                        {r.rentalContractStatus ? (
-                          <div className="mt-1.5">
-                            <RentalContractStatusBadge status={r.rentalContractStatus} className="!px-1.5 !py-0.5 !text-[10px]" />
-                          </div>
-                        ) : null}
-                        <div className="mt-1.5 flex gap-2">
-                          {r.checkInDone ? (
-                            <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-emerald-700">
-                              <LogIn className="h-3 w-3" aria-hidden />
-                              CI
-                            </span>
-                          ) : null}
-                          {r.checkOutDone ? (
-                            <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-emerald-700">
-                              <LogOut className="h-3 w-3" aria-hidden />
-                              CO
-                            </span>
-                          ) : null}
-                        </div>
+                        {isOwner ? (
+                          <>
+                            <p className="text-sm font-semibold text-zinc-900">{reservationPeriodShort(r)}</p>
+                            <p className="mt-1 flex items-center gap-1 text-[11px] text-zinc-500">
+                              <Ship className="h-3 w-3 shrink-0" aria-hidden />
+                              {boatLabel(r.boatId)}
+                            </p>
+                          </>
+                        ) : (
+                          <>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <p className="truncate text-sm font-semibold text-zinc-900">{r.title}</p>
+                              <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${badge.className}`}>
+                                {badge.label}
+                              </span>
+                            </div>
+                            {client ? <p className="mt-0.5 truncate text-[11px] text-zinc-600">{client}</p> : null}
+                            <p className="mt-1 text-[11px] text-zinc-500">{reservationPeriodShort(r)}</p>
+                            <p className="mt-0.5 flex items-center gap-1 text-[11px] text-zinc-400">
+                              <Ship className="h-3 w-3 shrink-0" aria-hidden />
+                              {boatLabel(r.boatId)}
+                            </p>
+                            {r.rentalContractStatus ? (
+                              <div className="mt-1.5">
+                                <RentalContractStatusBadge status={r.rentalContractStatus} className="!px-1.5 !py-0.5 !text-[10px]" />
+                              </div>
+                            ) : null}
+                            <div className="mt-1.5 flex gap-2">
+                              {r.checkInDone ? (
+                                <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-emerald-700">
+                                  <LogIn className="h-3 w-3" aria-hidden />
+                                  CI
+                                </span>
+                              ) : null}
+                              {r.checkOutDone ? (
+                                <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-emerald-700">
+                                  <LogOut className="h-3 w-3" aria-hidden />
+                                  CO
+                                </span>
+                              ) : null}
+                            </div>
+                          </>
+                        )}
                       </div>
                     </button>
                   );
@@ -498,8 +545,11 @@ export function ReservationsPage() {
                 <CalendarDays className="h-10 w-10 text-zinc-300" strokeWidth={1.5} />
                 <p className="mt-3 text-sm font-medium text-zinc-700">Aucune réservation sélectionnée</p>
                 <p className="mt-1 max-w-sm text-xs text-zinc-500">
-                  Choisissez une ligne dans la liste ou créez une réservation sur le calendrier.
+                  {isOwner
+                    ? 'Choisissez une ligne pour voir la date et les horaires du créneau.'
+                    : 'Choisissez une ligne dans la liste ou créez une réservation sur le calendrier.'}
                 </p>
+                {!isOwner ? (
                 <Link
                   to="/calendrier"
                   className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#416B9F] px-4 py-2 text-sm font-semibold text-white"
@@ -507,11 +557,12 @@ export function ReservationsPage() {
                   <Plus className="h-4 w-4" />
                   Nouvelle réservation
                 </Link>
+                ) : null}
               </div>
             ) : (
               <div className="space-y-3">
+                {!isOwner && selectedReservation ? (
                 <div className="flex flex-wrap justify-end gap-2">
-                  {selectedReservation ? (
                   <Link
                     to={calendarLink(selectedReservation)}
                     className="inline-flex items-center gap-2 rounded-xl border border-zinc-200/90 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 shadow-sm hover:bg-zinc-50"
@@ -519,15 +570,16 @@ export function ReservationsPage() {
                     <Calendar className="h-4 w-4" />
                     Voir au calendrier
                   </Link>
-                  ) : null}
                 </div>
+                ) : null}
                 <ReservationDetailsPanel
                   layout="embedded"
                   reservationId={selectedId}
                   reservations={reservations}
                   boatsCatalog={catalogBoats}
                   fleetsCatalog={fleets}
-                  onEdit={editReservation}
+                  ownerReadOnly={isOwner}
+                  onEdit={isOwner ? undefined : editReservation}
                   onOpenReservation={(id) => setSelectedId(id)}
                 />
               </div>

@@ -1,4 +1,16 @@
-import { IsBoolean, IsIn, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import {
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 import { EXTRA_BILLING_UNIT_VALUES, EXTRA_PRICE_KIND_VALUES, PAYMENT_CHANNEL_VALUES } from '@bleu-calanque/shared';
 
 export { EXTRA_PRICE_KIND_VALUES, EXTRA_BILLING_UNIT_VALUES, PAYMENT_CHANNEL_VALUES };
@@ -43,8 +55,25 @@ export class CreateExtraDto {
   paymentChannel?: (typeof PAYMENT_CHANNEL_VALUES)[number];
 
   @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  icon?: string | null;
+
+  @IsOptional()
   @IsBoolean()
   enabled?: boolean;
 }
 
 export class UpdateExtraDto extends CreateExtraDto {}
+
+export class ExtraAvailabilityQueryDto {
+  @IsString()
+  start!: string;
+
+  @IsString()
+  end!: string;
+
+  @IsOptional()
+  @IsUUID('4')
+  excludeReservationId?: string;
+}

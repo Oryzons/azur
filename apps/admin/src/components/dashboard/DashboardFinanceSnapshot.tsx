@@ -14,7 +14,6 @@ export function DashboardFinanceSnapshot() {
   const reservations = useMemo(() => rawItems.map(deserializeReservation), [rawItems]);
   const extrasCatalog = useExtrasStore((s) => s.extras);
   const couponsCatalog = useCouponsStore((s) => s.coupons);
-  const couponRedemptions = useCouponsStore((s) => s.redemptions);
 
   const now = new Date();
   const dayStart = startOfDay(now);
@@ -26,12 +25,11 @@ export function DashboardFinanceSnapshot() {
 
   const sums = useMemo(
     () => ({
-      day: sumTotals(reservations, { start: dayStart, endExclusive: dayEnd }, extrasCatalog, couponsCatalog, couponRedemptions),
-      week: sumTotals(reservations, { start: weekStart, endExclusive: weekEnd }, extrasCatalog, couponsCatalog, couponRedemptions),
-      month: sumTotals(reservations, { start: monthStart, endExclusive: monthEnd }, extrasCatalog, couponsCatalog, couponRedemptions),
+      day: sumTotals(reservations, { start: dayStart, endExclusive: dayEnd }, extrasCatalog, couponsCatalog),
+      week: sumTotals(reservations, { start: weekStart, endExclusive: weekEnd }, extrasCatalog, couponsCatalog),
+      month: sumTotals(reservations, { start: monthStart, endExclusive: monthEnd }, extrasCatalog, couponsCatalog),
     }),
     [
-      couponRedemptions,
       couponsCatalog,
       dayEnd,
       dayStart,

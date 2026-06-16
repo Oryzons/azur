@@ -16,6 +16,11 @@ import { SecureMediaService } from '../common/media/secure-media.service';
 import { AuditService } from '../common/audit/audit.service';
 import { AuditEntity } from '../common/audit/audit.constants';
 import { entityIdNameSnapshot } from '../common/audit/audit-snapshots';
+import { processBoatDetailsJson, readLegalDocFileUrl, type BoatLegalDocKey } from './boat-details-media';
+import {
+  legalDocDownloadFilename,
+  resolveStoredMediaUrl,
+} from '../common/media/stored-media-resolver';
 
 function trimOrThrow(v: string, label: string) {
   const x = v.trim();
@@ -87,6 +92,8 @@ export class CatalogService {
       input.coverPhotoIndex ?? 0,
     );
 
+    const detailsJson = await processBoatDetailsJson(input.detailsJson, this.media);
+
     const boat = await this.prisma.boat.create({
       data: {
         brand,
@@ -96,7 +103,7 @@ export class CatalogService {
         maxPassengers: input.maxPassengers,
         fleetId: input.fleetId ?? null,
         ownerMemberId: input.ownerMemberId ?? null,
-        detailsJson: input.detailsJson ?? null,
+        detailsJson: detailsJson ?? null,
         depositAmountCents: input.depositAmountCents ?? 250000,
         photos: photos.length
           ? {
@@ -134,6 +141,8 @@ export class CatalogService {
       { retainUrls: exists.photos.map((p) => p.url) },
     );
 
+    const detailsJson = await processBoatDetailsJson(input.detailsJson, this.media, exists.detailsJson);
+
     const data: Prisma.BoatUncheckedUpdateInput = {
       brand,
       name,
@@ -142,7 +151,7 @@ export class CatalogService {
       maxPassengers: input.maxPassengers,
       fleetId: input.fleetId ?? null,
       ownerMemberId: input.ownerMemberId ?? null,
-      detailsJson: input.detailsJson ?? null,
+      detailsJson: detailsJson ?? null,
       photos: {
         deleteMany: { boatId: id },
         create: photos.map((url, idx) => ({ url, sortOrder: idx })),
@@ -191,6 +200,32 @@ export class CatalogService {
       { depositAmountCents: boat.depositAmountCents },
     );
     return boat;
+  }
+
+  async downloadBoatLegalDocument(
+    boatId: string,
+    docKey: BoatLegalDocKey,
+    user: AuthUser,
+  ): Promise<{ buffer: Buffer; mimeType: string; filename: string }> {
+    const boat = await this.prisma.boat.findUnique({
+      where: { id: boatId },
+      select: { id: true, detailsJson: true, ownerMemberId: true },
+    });
+    if (!boat) throw new NotFoundException('Bateau introuvable.');
+
+    if (user.role === UserRole.OWNER) {
+      await this.ownerScope.assertBoatOwned(user, boatId);
+    }
+
+    const fileUrl = readLegalDocFileUrl(boat.detailsJson, docKey);
+    if (!fileUrl) throw new NotFoundException('Document introuvable.');
+
+    const resolved = await resolveStoredMediaUrl(fileUrl);
+    return {
+      buffer: resolved.buffer,
+      mimeType: resolved.mimeType,
+      filename: legalDocDownloadFilename(docKey, resolved.extension),
+    };
   }
 }
 

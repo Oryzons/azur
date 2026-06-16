@@ -13,8 +13,11 @@ import type {
 import { emptyWizardDetails } from '@/pages/calendar/reservationWizardTypes';
 import { couponRequiresAirbusBadge } from '@/lib/airbusCoupon';
 import { applyCouponToRentalAndExtrasEuros } from '@bleu-calanque/shared';
+import { reservationsToCouponCountables } from '@/lib/couponReservation';
 import { getEffectiveCouponDiscount, isCouponActiveNow, useCouponsStore } from '@/stores/coupons';
+import { deserializeReservation, useReservationsStore } from '@/stores/reservations';
 import { birthDateIsoToDisplay, WizardStep1, WizardStep2, WizardStep3, WizardStep4 } from '@/pages/calendar/ReservationWizardSteps';
+import { splitExtrasByPaymentChannel, sumExtrasEuros } from '@/lib/extraPricing';
 import { useExtrasStore } from '@/stores/extras';
 import { useBoatPricingStore } from '@/stores/boatPricing';
 import { useBoatsStore } from '@/stores/boats';
@@ -33,6 +36,8 @@ function emptyPricingRecap(manualDiscPct = 0): WizardPricingRecap {
     hasPrice: false,
     priceNum: Number.NaN,
     extrasTotal: 0,
+    extrasOnlineTotal: 0,
+    extrasOfflineTotal: 0,
     subtotal: Number.NaN,
     locationNet: null,
     extrasNet: null,
@@ -59,6 +64,8 @@ export function ReservationCreateWizard(props: Readonly<{
   submitLabel?: string;
   /** Si vrai (ex. édition d’une réservation), ne pas réécraser prix/caution depuis le catalogue. */
   lockCatalogPricing?: boolean;
+  /** Exclure cette réservation du calcul de stock (édition). */
+  excludeReservationId?: string;
   onAddUnavailability?: (payload: { boatId: string; dateIso: string; startTime: string; endTime: string }) => void;
   onSubmit: (payload: ReservationWizardSubmitPayload) => void;
 }>) {
@@ -74,6 +81,7 @@ export function ReservationCreateWizard(props: Readonly<{
     titleLabel,
     submitLabel,
     lockCatalogPricing = false,
+    excludeReservationId,
     onAddUnavailability,
     onSubmit,
   } = props;
@@ -82,7 +90,13 @@ export function ReservationCreateWizard(props: Readonly<{
   const refreshMembers = useMembersStore((s) => s.refresh);
   const addMember = useMembersStore((s) => s.addMember);
   const couponsCatalog = useCouponsStore((s) => s.coupons);
-  const couponRedemptions = useCouponsStore((s) => s.redemptions);
+  const reservationItems = useReservationsStore((s) => s.items);
+  const reservationsHydrated = useReservationsStore((s) => s.hydrated);
+  const refreshReservations = useReservationsStore((s) => s.refresh);
+  const allReservations = useMemo(
+    () => reservationItems.map((s) => deserializeReservation(s)),
+    [reservationItems],
+  );
   const extrasCatalog = useExtrasStore((s) => s.extras);
   const pricingPeriods = useBoatPricingStore((s) => s.periods);
   const pricesByPeriodId = useBoatPricingStore((s) => s.pricesByPeriodId);
@@ -107,6 +121,10 @@ export function ReservationCreateWizard(props: Readonly<{
   const [availableCreditCents, setAvailableCreditCents] = useState(0);
 
   const clients = useMemo(() => members.filter((m): m is MemberClient => m.role === 'client'), [members]);
+
+  useEffect(() => {
+    if (!reservationsHydrated) void refreshReservations();
+  }, [reservationsHydrated, refreshReservations]);
 
   useEffect(() => {
     const memberId = details.linkedMemberId?.trim() || '';
@@ -348,25 +366,18 @@ export function ReservationCreateWizard(props: Readonly<{
     if (end.getTime() <= start.getTime()) end.setDate(end.getDate() + 1);
     const rentalDays = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / 86400000));
 
-    const unitMultiplier = (u: 'location' | 'jour' | 'semaine') => {
-      if (u === 'location') return 1;
-      if (u === 'jour') return rentalDays;
-      return Math.max(1, Math.ceil(rentalDays / 7));
-    };
+    const { online: onlineExtras, offline: offlineExtras } = splitExtrasByPaymentChannel(selectedExtras);
+    const extrasOnlineTotal = sumExtrasEuros(priceNum, onlineExtras, rentalDays);
+    const extrasOfflineTotal = sumExtrasEuros(priceNum, offlineExtras, rentalDays);
+    const extrasTotal = Math.round((extrasOnlineTotal + extrasOfflineTotal) * 100) / 100;
 
-    const extrasEuro = selectedExtras
-      .filter((e) => e.priceKind === 'euro')
-      .reduce((sum, e) => sum + e.priceValue * unitMultiplier(e.billingUnit), 0);
-    const extrasPercent = selectedExtras
-      .filter((e) => e.priceKind === 'percent')
-      .reduce((sum, e) => sum + (priceNum * (e.priceValue / 100)) * unitMultiplier(e.billingUnit), 0);
-    const extrasTotal = Math.round((extrasEuro + extrasPercent) * 100) / 100;
-
-    const subtotal = Math.round((priceNum + extrasTotal) * 100) / 100;
+    // Seuls location + extras en ligne entrent dans le total à payer et l'avoir.
+    const payableSubtotal = Math.round((priceNum + extrasOnlineTotal) * 100) / 100;
     const manualFactor = 1 - manualDiscPct / 100;
-    const afterManual = Math.round(subtotal * manualFactor * 100) / 100;
+    const afterManual = Math.round(payableSubtotal * manualFactor * 100) / 100;
     const locationAfterManual = Math.round(priceNum * manualFactor * 100) / 100;
-    const extrasAfterManual = Math.round(extrasTotal * manualFactor * 100) / 100;
+    const extrasAfterManual = Math.round(extrasOnlineTotal * manualFactor * 100) / 100;
+    const subtotal = payableSubtotal;
 
     const codeNorm = details.couponCode.trim().replaceAll(/\s+/g, '').toUpperCase();
     const clientKey = details.linkedMemberId?.trim() || details.clientEmail.trim().toLowerCase() || '__guest__';
@@ -398,7 +409,15 @@ export function ReservationCreateWizard(props: Readonly<{
           inactiveReason: 'Coupon désactivé ou hors période de validité',
         };
       } else {
-        const eff = getEffectiveCouponDiscount(matched, clientKey, couponRedemptions, evalDate);
+        const couponReservations = excludeReservationId
+          ? allReservations.filter((r) => r.id !== excludeReservationId)
+          : allReservations;
+        const eff = getEffectiveCouponDiscount(
+          matched,
+          clientKey,
+          reservationsToCouponCountables(couponReservations),
+          evalDate,
+        );
         couponLine = {
           code: codeNorm,
           applies: true,
@@ -434,6 +453,8 @@ export function ReservationCreateWizard(props: Readonly<{
       hasPrice: true,
       priceNum,
       extrasTotal,
+      extrasOnlineTotal,
+      extrasOfflineTotal,
       subtotal,
       locationNet,
       extrasNet,
@@ -448,7 +469,8 @@ export function ReservationCreateWizard(props: Readonly<{
   }, [
     availableCreditCents,
     couponsCatalog,
-    couponRedemptions,
+    allReservations,
+    excludeReservationId,
     dateIso,
     endTime,
     details.couponCode,
@@ -536,6 +558,10 @@ export function ReservationCreateWizard(props: Readonly<{
         setDetails={setDetails}
         pricing={pricingRecap}
         catalogPricingNote={catalogPricingNote}
+        dateIso={dateIso}
+        startTime={startTime}
+        endTime={endTime}
+        excludeReservationId={excludeReservationId}
       />
     );
   }

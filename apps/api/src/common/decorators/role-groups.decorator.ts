@@ -1,6 +1,8 @@
 import { SetMetadata } from '@nestjs/common';
 import {
   ADMIN_MANAGER_ROLES,
+  COMPTABILITE_OR_DESK_ROLES,
+  COMPTABILITE_ROLES,
   DESK_OR_OWNER_ROLES,
   DESK_ROLES,
   OWNER_PORTAL_ROLES,
@@ -10,8 +12,14 @@ import {
 } from '@bleu-calanque/shared';
 import { ROLES_KEY } from './roles.decorator';
 
-/** Back-office : ADMIN, MANAGER, STAFF — bloque AGENT par défaut. */
+/** Back-office : ADMIN, MANAGER, STAFF — bloque AGENT et DAF par défaut. */
 export const DeskOnly = () => SetMetadata(ROLES_KEY, [...DESK_ROLES]);
+
+/** Comptabilité : DAF uniquement. */
+export const ComptabiliteOnly = () => SetMetadata(ROLES_KEY, [...COMPTABILITE_ROLES]);
+
+/** Reporting financier : bureau + DAF. */
+export const ComptabiliteOrDesk = () => SetMetadata(ROLES_KEY, [...COMPTABILITE_OR_DESK_ROLES]);
 
 /** ADMIN + MANAGER (actions sensibles). */
 export const AdminManagerOnly = () => SetMetadata(ROLES_KEY, [...ADMIN_MANAGER_ROLES]);
@@ -39,4 +47,5 @@ export const AnyAuthenticated = () =>
     UserRole.STAFF,
     UserRole.AGENT,
     UserRole.OWNER,
+    UserRole.DAF,
   ]);

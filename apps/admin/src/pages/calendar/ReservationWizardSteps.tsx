@@ -1,4 +1,4 @@
-import { useMemo, useState, type Dispatch, type SetStateAction } from 'react';
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
 import { Ban, TicketPercent, ChevronDown, ChevronUp } from 'lucide-react';
 import type { ClientType, Civility, MemberClient } from '@/stores/members';
 import { formatPhoneInput } from '@/lib/phone';
@@ -6,7 +6,30 @@ import { couponRequiresAirbusBadge } from '@/lib/airbusCoupon';
 import type { BoatOption, ReservationWizardDetails, WizardPricingRecap } from '@/pages/calendar/reservationWizardTypes';
 import { clientDisplayNameFromDetails } from '@/pages/calendar/reservationWizardTypes';
 import { isCouponActiveNow, useCouponsStore } from '@/stores/coupons';
-import { formatExtraPriceLine, useExtrasStore } from '@/stores/extras';
+import type { Extra } from '@/stores/extras';
+import { useExtrasStore } from '@/stores/extras';
+import {
+  extraBillingUnitShort,
+  extraDisplayName,
+  formatExtraPriceAmount,
+  paymentChannelLabel,
+} from '@/lib/extraUi';
+import {
+  paymentMethodLabel,
+  computeInstallmentAmounts,
+  clampDepositPercent,
+  formatExtraRemainingLabel,
+  isSkipperExtra,
+  type ExtraAvailability,
+  type PaymentMethod,
+} from '@bleu-calanque/shared';
+import { fetchExtraAvailability } from '@/lib/extraStock';
+
+const PAYMENT_METHOD_CHOICES: PaymentMethod[] = ['ONLINE', 'CASH', 'CARD_ONSITE', 'CHECK', 'TRANSFER'];
+
+function formatEurosFromCents(cents: number): string {
+  return `${(cents / 100).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
+}
 
 export function formatBirthDateInput(value: string) {
   const digits = value.replaceAll(/\D/g, '').slice(0, 8);
@@ -52,6 +75,116 @@ function inputBase() {
 
 const COUPON_SELECT_MANUAL = '__manual__';
 
+function InstallmentMethodSelect(
+  props: Readonly<{ value: PaymentMethod; onChange: (m: PaymentMethod) => void; label: string }>,
+) {
+  return (
+    <label className="block">
+      <FieldLabel>{props.label}</FieldLabel>
+      <select
+        value={props.value}
+        onChange={(e) => props.onChange(e.target.value as PaymentMethod)}
+        className={inputBase()}
+      >
+        {PAYMENT_METHOD_CHOICES.map((m) => (
+          <option key={m} value={m}>
+            {paymentMethodLabel(m)}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function InstallmentPlanEditor(
+  props: Readonly<{
+    details: ReservationWizardDetails;
+    setDetails: Dispatch<SetStateAction<ReservationWizardDetails>>;
+    pricing: WizardPricingRecap;
+  }>,
+) {
+  const { details, setDetails, pricing } = props;
+  const defaultMethods: PaymentMethod[] = ['ONLINE', 'ONLINE'];
+  const methods = details.installmentMethods.length >= 2 ? details.installmentMethods : defaultMethods;
+  const pct = clampDepositPercent(Number(String(details.depositPercent).replaceAll(',', '.')) || 50);
+  const totalCents = Math.round((pricing.finalPrice ?? 0) * 100);
+  const { depositCents, balanceCents } = computeInstallmentAmounts(totalCents, pct);
+
+  function setMethod(index: number, m: PaymentMethod) {
+    setDetails((d) => {
+      const base: PaymentMethod[] = ['ONLINE', 'ONLINE'];
+      const next: PaymentMethod[] = [...(d.installmentMethods.length >= 2 ? d.installmentMethods : base)];
+      next[index] = m;
+      // Le canal global suit les modes : en ligne si au moins une échéance est en ligne.
+      const anyOnline = next.some((x) => x === 'ONLINE');
+      return { ...d, installmentMethods: next, paymentChannel: anyOnline ? 'online' : 'offline' };
+    });
+  }
+
+  return (
+    <div className="space-y-3 rounded-2xl border border-[#416B9F]/20 bg-[#416B9F]/5 p-4">
+      <div>
+        <FieldLabel>Acompte (1re échéance)</FieldLabel>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          {[30, 50, 70].map((p) => (
+            <button
+              key={p}
+              type="button"
+              onClick={() => setDetails((d) => ({ ...d, depositPercent: String(p) }))}
+              className={[
+                'rounded-xl px-3 py-1.5 text-xs font-semibold transition',
+                pct === p
+                  ? 'bg-[#416B9F] text-white'
+                  : 'border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50',
+              ].join(' ')}
+            >
+              {p} %
+            </button>
+          ))}
+          <div className="relative">
+            <input
+              value={details.depositPercent}
+              onChange={(e) => setDetails((d) => ({ ...d, depositPercent: e.target.value }))}
+              inputMode="numeric"
+              className="w-24 rounded-xl border border-zinc-200/90 bg-white px-3 py-1.5 pr-7 text-sm text-zinc-900 shadow-sm outline-none focus:border-[#416B9F]/60 focus:ring-2 focus:ring-[#416B9F]/15"
+              placeholder="50"
+            />
+            <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-zinc-400">%</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <InstallmentMethodSelect
+          label="Mode acompte"
+          value={methods[0]}
+          onChange={(m) => setMethod(0, m)}
+        />
+        <InstallmentMethodSelect
+          label="Mode solde"
+          value={methods[1]}
+          onChange={(m) => setMethod(1, m)}
+        />
+      </div>
+
+      {totalCents > 0 ? (
+        <div className="grid grid-cols-2 gap-2 text-sm">
+          <div className="rounded-xl bg-white px-3 py-2 ring-1 ring-zinc-200">
+            <p className="text-[11px] uppercase tracking-wide text-zinc-500">Acompte · {paymentMethodLabel(methods[0])}</p>
+            <p className="font-semibold text-zinc-900">{formatEurosFromCents(depositCents)}</p>
+          </div>
+          <div className="rounded-xl bg-white px-3 py-2 ring-1 ring-zinc-200">
+            <p className="text-[11px] uppercase tracking-wide text-zinc-500">Solde · {paymentMethodLabel(methods[1])}</p>
+            <p className="font-semibold text-zinc-900">{formatEurosFromCents(balanceCents)}</p>
+          </div>
+        </div>
+      ) : (
+        <p className="text-xs text-zinc-500">Renseigne le prix de location pour voir la répartition acompte / solde.</p>
+      )}
+    </div>
+  );
+}
+
 export function RoundCheck(props: Readonly<{ checked: boolean; onToggle: () => void; label: string }>) {
   const { checked, onToggle, label } = props;
   return (
@@ -65,6 +198,153 @@ export function RoundCheck(props: Readonly<{ checked: boolean; onToggle: () => v
       </span>
       <span className="text-sm font-semibold text-zinc-800">{label}</span>
     </label>
+  );
+}
+
+/** Libellé court d'une offre skipper (section déjà titrée « Skipper »). */
+function skipperOfferLabel(name: string): string {
+  const n = name.trim();
+  if (/^skipper$/i.test(n)) return 'Journée complète';
+  const stripped = n.replace(/^skipper\s*[-–—]?\s*/i, '').trim();
+  if (!stripped) return extraDisplayName(n);
+  return stripped.charAt(0).toUpperCase() + stripped.slice(1);
+}
+
+function ExtraOptionCard(
+  props: Readonly<{
+    extra: Extra;
+    checked: boolean;
+    onToggle: () => void;
+    displayName?: string;
+    remaining?: number | null;
+  }>,
+) {
+  const { extra, checked, onToggle, displayName, remaining = null } = props;
+  const offline = extra.paymentChannel === 'offline';
+  const title = displayName ?? extraDisplayName(extra.name);
+  const soldOut = remaining === 0 && !checked;
+  return (
+    <label
+      className={[
+        'flex items-start gap-3 rounded-2xl border px-3 py-3 shadow-sm transition',
+        soldOut ? 'cursor-not-allowed opacity-60' : 'cursor-pointer',
+        checked
+          ? 'border-[#416B9F]/50 bg-[#416B9F]/5 ring-1 ring-[#416B9F]/20'
+          : 'border-zinc-200/90 bg-white hover:border-zinc-300',
+      ].join(' ')}
+    >
+      <span className="relative mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center">
+        <input
+          type="checkbox"
+          checked={checked}
+          disabled={soldOut}
+          onChange={() => onToggle()}
+          className="sr-only peer"
+        />
+        <span className="h-5 w-5 rounded-full border border-zinc-300 bg-white shadow-sm transition-colors peer-checked:border-[#416B9F] peer-checked:bg-[#416B9F]" />
+        <span className="pointer-events-none absolute text-[12px] font-black leading-none text-white opacity-0 transition-opacity peer-checked:opacity-100">
+          ✓
+        </span>
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-semibold leading-snug text-zinc-900">{title}</span>
+        <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
+          <span className="inline-flex rounded-lg bg-[#416B9F]/10 px-2 py-0.5 text-xs font-bold tabular-nums text-[#416B9F]">
+            {extra.priceKind === 'percent' ? formatExtraPriceAmount(extra) : `${formatExtraPriceAmount(extra)} €`}
+          </span>
+          <span className="inline-flex rounded-lg bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-600">
+            {extraBillingUnitShort(extra.billingUnit)}
+          </span>
+          {offline ? (
+            <span className="inline-flex rounded-lg bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800 ring-1 ring-amber-200/80">
+              {paymentChannelLabel('offline')}
+            </span>
+          ) : null}
+          {remaining != null ? (
+            <span
+              className={[
+                'inline-flex rounded-lg px-2 py-0.5 text-[11px] font-semibold tabular-nums',
+                remaining === 0
+                  ? 'bg-red-50 text-red-700 ring-1 ring-red-200/80'
+                  : remaining <= 2
+                    ? 'bg-amber-50 text-amber-800 ring-1 ring-amber-200/80'
+                    : 'bg-zinc-100 text-zinc-600',
+              ].join(' ')}
+            >
+              {remaining === 0 ? 'Épuisé ce jour' : formatExtraRemainingLabel(remaining)}
+            </span>
+          ) : null}
+        </span>
+      </span>
+    </label>
+  );
+}
+
+function ExtrasPicker(props: Readonly<{
+  extras: Extra[];
+  selected: Record<string, boolean>;
+  availability: Record<string, ExtraAvailability>;
+  onToggle: (extraId: string, isSkipper: boolean) => void;
+}>) {
+  const { extras, selected, availability, onToggle } = props;
+  const enabled = [...extras].filter((e) => e.enabled);
+  const skipperExtras = enabled
+    .filter((e) => isSkipperExtra({ name: e.name, icon: e.icon }))
+    .sort((a, b) => a.priceValue - b.priceValue);
+  const otherExtras = enabled
+    .filter((e) => !isSkipperExtra({ name: e.name, icon: e.icon }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+
+  if (enabled.length === 0) {
+    return (
+      <p className="mt-2 text-sm text-zinc-500">
+        Aucun extra actif. Ajoute-en dans la page <span className="font-semibold text-zinc-700">Extras</span>.
+      </p>
+    );
+  }
+
+  return (
+    <div className="mt-2 space-y-4">
+      {otherExtras.length > 0 ? (
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {otherExtras.map((ex) => (
+            <ExtraOptionCard
+              key={ex.id}
+              extra={ex}
+              checked={Boolean(selected[ex.id])}
+              remaining={availability[ex.id]?.remaining ?? null}
+              onToggle={() => onToggle(ex.id, false)}
+            />
+          ))}
+        </div>
+      ) : null}
+
+      {skipperExtras.length > 0 ? (
+        <div
+          className={[
+            'rounded-2xl border border-emerald-200/80 bg-emerald-50/40 p-3',
+            otherExtras.length > 0 ? 'mt-1' : '',
+          ].join(' ')}
+        >
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-emerald-800">Skipper</p>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {skipperExtras.map((ex) => (
+              <ExtraOptionCard
+                key={ex.id}
+                extra={ex}
+                displayName={skipperOfferLabel(ex.name)}
+                checked={Boolean(selected[ex.id])}
+                remaining={availability[ex.id]?.remaining ?? null}
+                onToggle={() => onToggle(ex.id, true)}
+              />
+            ))}
+          </div>
+          <p className="mt-2 text-[11px] leading-relaxed text-emerald-900/70">
+            Règlement sur place (espèces) le jour de la location — non inclus dans le paiement en ligne.
+          </p>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -459,6 +739,75 @@ export function WizardStep3(props: Readonly<{
           <input value={details.clientCountry} onChange={(e) => setDetails((d) => ({ ...d, clientCountry: e.target.value }))} className={inputBase()} />
         </label>
       </div>
+
+      <div className="rounded-2xl border border-zinc-200/90 bg-zinc-50/60 p-4">
+        <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Contrat PDF — identité & permis</p>
+        <p className="mt-1 text-[11px] leading-relaxed text-zinc-500">
+          Ces champs alimentent le contrat de location. Les justificatifs restent sur la fiche membre ou le lien de signature.
+        </p>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <label className="block">
+            <FieldLabel>Type de pièce d&apos;identité</FieldLabel>
+            <select
+              value={details.clientIdType}
+              onChange={(e) => setDetails((d) => ({ ...d, clientIdType: e.target.value }))}
+              className={inputBase()}
+            >
+              <option value="Carte d'identité">Carte d&apos;identité</option>
+              <option value="Passeport">Passeport</option>
+              <option value="Titre de séjour">Titre de séjour</option>
+              <option value="Permis de conduire">Permis de conduire</option>
+            </select>
+          </label>
+          <label className="block">
+            <FieldLabel>N° pièce d&apos;identité</FieldLabel>
+            <input
+              value={details.clientIdNumber}
+              onChange={(e) => setDetails((d) => ({ ...d, clientIdNumber: e.target.value }))}
+              className={inputBase()}
+              autoComplete="off"
+            />
+          </label>
+          <label className="block">
+            <FieldLabel>Type de permis (chef de bord)</FieldLabel>
+            <input
+              value={details.licenseType}
+              onChange={(e) => setDetails((d) => ({ ...d, licenseType: e.target.value }))}
+              className={inputBase()}
+              placeholder="Ex. Permis côtier, Permis fluvial…"
+            />
+          </label>
+          <label className="block">
+            <FieldLabel>N° permis</FieldLabel>
+            <input
+              value={details.licenseNumber}
+              onChange={(e) => setDetails((d) => ({ ...d, licenseNumber: e.target.value }))}
+              className={inputBase()}
+              autoComplete="off"
+            />
+          </label>
+          <label className="block">
+            <FieldLabel>Pays du permis</FieldLabel>
+            <input
+              value={details.licenseCountry}
+              onChange={(e) => setDetails((d) => ({ ...d, licenseCountry: e.target.value }))}
+              className={inputBase()}
+            />
+          </label>
+          <label className="block">
+            <FieldLabel>Année d&apos;obtention</FieldLabel>
+            <input
+              value={details.licenseYear}
+              onChange={(e) => setDetails((d) => ({ ...d, licenseYear: e.target.value.replace(/\D/g, '').slice(0, 4) }))}
+              className={inputBase()}
+              inputMode="numeric"
+              placeholder="AAAA"
+              maxLength={4}
+            />
+          </label>
+        </div>
+      </div>
+
       <div>
         <FieldLabel>Paiement de la réservation</FieldLabel>
         <div className="flex flex-wrap gap-2 mt-2">
@@ -518,7 +867,8 @@ function WizardPricingRecapPanel(props: Readonly<{
   const { pricing, depositAmount, paymentChannel, installments } = props;
   const {
     priceNum,
-    extrasTotal,
+    extrasOnlineTotal,
+    extrasOfflineTotal,
     manualDiscPct,
     hasPrice,
     afterManual,
@@ -531,7 +881,8 @@ function WizardPricingRecapPanel(props: Readonly<{
   } = pricing;
   const hasDiscounts = hasPrice && (manualDiscPct > 0 || couponLine?.applies === true);
   const showLocationToggle = hasDiscounts && locationNet !== null && Number.isFinite(locationNet);
-  const showExtrasToggle = hasDiscounts && extrasTotal > 0 && extrasNet !== null && Number.isFinite(extrasNet);
+  const showExtrasToggle =
+    hasDiscounts && extrasOnlineTotal > 0 && extrasNet !== null && Number.isFinite(extrasNet);
   const [openLocation, setOpenLocation] = useState(false);
   const [openExtras, setOpenExtras] = useState(false);
   const locationNetLabel = showLocationToggle ? `${locationNet.toFixed(2)} €` : null;
@@ -551,13 +902,13 @@ function WizardPricingRecapPanel(props: Readonly<{
             netValueLabel={locationNetLabel}
           />
         </li>
-        {hasPrice && extrasTotal > 0 ? (
+        {hasPrice && extrasOnlineTotal > 0 ? (
           <li>
             <PricingLineWithToggle
-              label="Extras"
+              label="Extras (en ligne)"
               value={
                 <ExtrasLineValue
-                  extrasTotal={extrasTotal}
+                  extrasTotal={extrasOnlineTotal}
                   extrasNet={extrasNet}
                   manualDiscPct={manualDiscPct}
                   couponLine={couponLine}
@@ -568,6 +919,13 @@ function WizardPricingRecapPanel(props: Readonly<{
               setOpen={setOpenExtras}
               netValueLabel={extrasNetLabel}
             />
+          </li>
+        ) : null}
+        {hasPrice && extrasOfflineTotal > 0 ? (
+          <li className="text-amber-900">
+            Extras (sur place) :{' '}
+            <span className="font-semibold tabular-nums">{extrasOfflineTotal.toFixed(2)} €</span>
+            <span className="ml-1 text-xs font-normal text-amber-800">— hors paiement en ligne et hors avoir</span>
           </li>
         ) : null}
         {hasPrice && manualDiscPct > 0 ? (
@@ -622,8 +980,13 @@ export function WizardStep4(props: Readonly<{
   setDetails: Dispatch<SetStateAction<ReservationWizardDetails>>;
   pricing: WizardPricingRecap;
   catalogPricingNote?: string | null;
+  dateIso: string;
+  startTime: string;
+  endTime: string;
+  excludeReservationId?: string;
 }>) {
-  const { details, setDetails, pricing, catalogPricingNote } = props;
+  const { details, setDetails, pricing, catalogPricingNote, dateIso, startTime, endTime, excludeReservationId } =
+    props;
   const storeCoupons = useCouponsStore((s) => s.coupons);
   const storeExtras = useExtrasStore((s) => s.extras);
   const couponOptions = useMemo(
@@ -647,6 +1010,19 @@ export function WizardStep4(props: Readonly<{
       ? null
       : storeCoupons.find((c) => c.code === couponCodeNorm) ?? null;
   const showAirbusBadge = matchedCoupon != null && couponRequiresAirbusBadge(matchedCoupon);
+
+  const [extraAvailability, setExtraAvailability] = useState<Record<string, ExtraAvailability>>({});
+  useEffect(() => {
+    const ac = new AbortController();
+    void fetchExtraAvailability({ dateIso, startTime, endTime, excludeReservationId })
+      .then((data) => {
+        if (!ac.signal.aborted) setExtraAvailability(data);
+      })
+      .catch(() => {
+        if (!ac.signal.aborted) setExtraAvailability({});
+      });
+    return () => ac.abort();
+  }, [dateIso, startTime, endTime, excludeReservationId]);
 
   return (
     <div className="space-y-4">
@@ -693,7 +1069,6 @@ export function WizardStep4(props: Readonly<{
               {couponOptions.map((c) => (
                 <option key={c.id} value={c.code}>
                   {c.code}
-                  {c.internalLabel ? ` — ${c.internalLabel}` : ''}
                 </option>
               ))}
               <option value={COUPON_SELECT_MANUAL}>Autre — saisie libre</option>
@@ -766,33 +1141,25 @@ export function WizardStep4(props: Readonly<{
       </label>
       <div>
         <FieldLabel>Extras</FieldLabel>
-        {storeExtras.filter((e) => e.enabled).length === 0 ? (
-          <p className="mt-2 text-sm text-zinc-500">
-            Aucun extra actif. Ajoute-en dans la page <span className="font-semibold text-zinc-700">Extras</span>.
-          </p>
-        ) : (
-          <div className="grid grid-cols-1 gap-2 mt-2 sm:grid-cols-2">
-            {[...storeExtras]
-              .filter((e) => e.enabled)
-              .sort((a, b) => a.name.localeCompare(b.name, 'fr'))
-              .map((ex) => {
-                const label = `${ex.name} · ${formatExtraPriceLine(ex)}`;
-                return (
-                  <RoundCheck
-                    key={ex.id}
-                    checked={Boolean(details.extras[ex.id])}
-                    onToggle={() =>
-                      setDetails((d) => ({
-                        ...d,
-                        extras: { ...d.extras, [ex.id]: !d.extras[ex.id] },
-                      }))
-                    }
-                    label={label}
-                  />
-                );
-              })}
-          </div>
-        )}
+        <ExtrasPicker
+          extras={storeExtras}
+          selected={details.extras}
+          availability={extraAvailability}
+          onToggle={(extraId, isSkipperOffer) =>
+            setDetails((d) => {
+              const turningOn = !d.extras[extraId];
+              if (turningOn && extraAvailability[extraId]?.remaining === 0) return d;
+              const next: Record<string, boolean> = { ...d.extras };
+              if (isSkipperOffer && turningOn) {
+                for (const ex of storeExtras) {
+                  if (isSkipperExtra({ name: ex.name, icon: ex.icon })) next[ex.id] = false;
+                }
+              }
+              next[extraId] = turningOn;
+              return { ...d, extras: next };
+            })
+          }
+        />
       </div>
       <div>
         <FieldLabel>Échéancier</FieldLabel>
@@ -814,6 +1181,9 @@ export function WizardStep4(props: Readonly<{
           ))}
         </div>
       </div>
+      {details.installments === 2 ? (
+        <InstallmentPlanEditor details={details} setDetails={setDetails} pricing={pricing} />
+      ) : null}
       <label className="block">
         <FieldLabel>Détails du règlement & conditions</FieldLabel>
         <textarea

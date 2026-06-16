@@ -1,13 +1,25 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { CheckFlowKind, InternalNotificationKind, Prisma } from '@prisma/client';
+
+const OWNER_NOTIFY_SELECT = {
+  ownerNotifyReservationsEnabled: true,
+  ownerNotifyNewReservation: true,
+  ownerNotifyReservationUpdated: true,
+  ownerNotifyReservationCancelled: true,
+  ownerNotifyReservationRestored: true,
+  ownerNotifyReservationPaid: true,
+} satisfies Prisma.UserSelect;
 import { UserRole, type AuthUser, isOwnerRole } from '@bleu-calanque/shared';
 import { OwnerScopeService } from '../common/auth/owner-scope.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   buildNotificationCopy,
+  buildOwnerReservationNotificationCopy,
   diffReservationNotificationEvents,
   eventToInternalKind,
+  ownerPrefsAllowReservationEvent,
   settingsAllowsKind,
+  type ReservationNotificationEvent,
 } from './reservation-notification-events';
 
 const NOTIF_SETTINGS_ID = 'notifications_settings';
@@ -208,17 +220,21 @@ export class InternalNotificationsService {
       const row = after ?? before;
       if (!row) continue;
       await this.createReservationNotification(row, kind);
-      if (event === 'RESERVATION_CREATED') {
-        await this.notifyOwnersOnReservation(row);
-      }
+      await this.notifyOwnersOnReservationEvent(row, event);
     }
   }
 
-  async notifyOwnersOnReservation(
+  async notifyOwnersOnReservationEvent(
     reservation: Prisma.ReservationGetPayload<{ include: { boat: true } }>,
+    event: ReservationNotificationEvent,
   ) {
     const ownerUserIds = await this.ownerScope.findOwnerUserIdsForBoat(reservation.boatId);
     if (ownerUserIds.length === 0) return;
+
+    const owners = await this.prisma.user.findMany({
+      where: { id: { in: ownerUserIds } },
+      select: { id: true, ...OWNER_NOTIFY_SELECT },
+    });
 
     const boat = reservation.boat
       ? `${reservation.boat.brand} ${reservation.boat.name}`.trim()
@@ -227,21 +243,17 @@ export class InternalNotificationsService {
       [reservation.clientFirstName, reservation.clientLastName].filter(Boolean).join(' ').trim() ||
       reservation.title?.trim() ||
       'Client';
-    const when = reservation.startAt.toLocaleString('fr-FR', {
-      weekday: 'short',
-      day: 'numeric',
-      month: 'short',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
 
-    for (const recipientUserId of ownerUserIds) {
+    const { title, message, kind } = buildOwnerReservationNotificationCopy(event, reservation);
+
+    for (const owner of owners) {
+      if (!ownerPrefsAllowReservationEvent(owner, event)) continue;
       await this.prisma.internalNotification.create({
         data: {
-          kind: 'RESERVATION_ON_OWNER_BOAT',
-          title: 'Nouvelle réservation sur votre bateau',
-          message: `${clientName} — ${boat} · départ ${when}`,
-          recipientUserId,
+          kind,
+          title,
+          message,
+          recipientUserId: owner.id,
           reservationId: reservation.id,
           boatName: boat,
           clientName,

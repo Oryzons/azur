@@ -21,6 +21,7 @@ import {
   FileText,
   Eye,
   FileDown,
+  Receipt,
   Shield,
   ShieldAlert,
   ShieldCheck,
@@ -42,22 +43,27 @@ import { ReservationResolutionPanel } from '@/components/reservations/Reservatio
 import { CancelReservationDialog } from '@/components/ui/CancelReservationDialog';
 import { startOfDay } from '@/pages/calendar/calendarConstants';
 import { BOAT_TYPES_UI, type Boat, type Fleet } from '@/stores/boats';
+import { reservationPaymentContext } from '@/lib/reservationOfflineDue';
 import { useExtrasStore } from '@/stores/extras';
 import { useCouponsStore } from '@/stores/coupons';
 import { computeReservationPricingDisplay } from '@/lib/reservationPricingDisplay';
 import { useMembersStore } from '@/stores/members';
 import { ReservationCheckFlowBlock } from '@/components/reservations/ReservationCheckFlowBlock';
 import { RentalContractStatusBadge } from '@/components/reservations/RentalContractStatusBadge';
-import { useReservationsStore } from '@/stores/reservations';
+import { deserializeReservation, useReservationsStore } from '@/stores/reservations';
 import { useNotificationsStore } from '@/stores/notifications';
 import { api } from '@/lib/api';
+import { paymentMethodLabel } from '@bleu-calanque/shared';
 import { extractApiErrorMessage } from '@/lib/apiError';
 import { filenameFromContentDisposition, openPdfBlobInNewTab } from '@/lib/openPdfBlob';
 import type { Reservation } from '@/pages/calendar/reservationTypes';
 import type { ReservationWizardDetails } from '@/pages/calendar/reservationWizardTypes';
 import {
   RESERVATION_STATUSES,
+  canRestoreReservation,
+  hasReservationCancellation,
   isReservationCancelled,
+  isReservationFullyPaid,
   resolveReservationStatus,
   statusAfterPaymentCaptured,
   statusBadgeClass,
@@ -98,7 +104,19 @@ function sameCalendarDay(a: Date, b: Date) {
   );
 }
 
-function reservationSummaryCardClass(status: ReservationStatus | null): string {
+function reservationSummaryCardClass(
+  status: ReservationStatus | null,
+  details?: Reservation['details'] | null,
+): string {
+  if (hasReservationCancellation(details)) {
+    if (status === 'refunded') {
+      return 'border-indigo-200/90 bg-gradient-to-br from-indigo-50/90 via-red-50/40 to-white';
+    }
+    if (status === 'partially_refunded') {
+      return 'border-fuchsia-200/90 bg-gradient-to-br from-fuchsia-50/90 via-red-50/40 to-white';
+    }
+    return 'border-red-200/90 bg-gradient-to-br from-red-50/90 to-white';
+  }
   switch (status) {
     case 'refunded':
       return 'border-indigo-200/90 bg-gradient-to-br from-indigo-50/90 to-white';
@@ -136,9 +154,7 @@ function ClientBlockPresent(props: Readonly<{
   const clientName = `${civ}${d.clientFirstName} ${d.clientLastName}`.trim() || '—';
   let linked: string = '—';
   if (d.linkedMemberId?.trim()) {
-    linked = props.linkedMemberLabel
-      ? `${props.linkedMemberLabel} (${d.linkedMemberId})`
-      : d.linkedMemberId;
+    linked = props.linkedMemberLabel ? props.linkedMemberLabel : 'Compte membre';
   }
   return (
     <SectionCard icon={User} title="Client" collapsible>
@@ -158,6 +174,27 @@ function ClientBlockPresent(props: Readonly<{
         }
       />
       <InfoRow icon={Globe} label="Pays" value={d.clientCountry || '—'} />
+      {d.clientIdNumber?.trim() ? (
+        <InfoRow
+          icon={Tag}
+          label="Pièce d'identité"
+          value={`${d.clientIdType?.trim() || "Carte d'identité"} — ${d.clientIdNumber.trim()}`}
+        />
+      ) : null}
+      {d.licenseNumber?.trim() || d.licenseType?.trim() ? (
+        <InfoRow
+          icon={Tag}
+          label="Permis bateau"
+          value={[
+            d.licenseType?.trim(),
+            d.licenseNumber?.trim(),
+            d.licenseCountry?.trim(),
+            d.licenseYear?.trim() ? `(${d.licenseYear.trim()})` : '',
+          ]
+            .filter(Boolean)
+            .join(' · ') || '—'}
+        />
+      ) : null}
     </SectionCard>
   );
 }
@@ -212,6 +249,91 @@ function ReservationBlockPresent(props: Readonly<{ reservation: Reservation; det
   );
 }
 
+function InstallmentPlanRows(props: Readonly<{ reservation: Reservation; locked?: boolean }>) {
+  const { reservation, locked } = props;
+  const plan = reservation.installmentPlan ?? [];
+  const refreshReservations = useReservationsStore((s) => s.refresh);
+  const [busy, setBusy] = useState<number | null>(null);
+  const [error, setError] = useState('');
+
+  if (plan.length < 2) return null;
+
+  async function settle(sequence: number, paid: boolean) {
+    setBusy(sequence);
+    setError('');
+    try {
+      await api.post(`/reservations/${reservation.id}/installments/${sequence}/settle`, { paid });
+      await refreshReservations();
+    } catch {
+      setError('Action impossible. Réessayez.');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="space-y-2 rounded-xl border border-[#416B9F]/20 bg-[#416B9F]/5 px-3 py-2.5">
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-[#416B9F]">
+        Plan d’échéances ({plan.length} fois)
+      </p>
+      {error ? <p className="text-xs font-medium text-red-700">{error}</p> : null}
+      {plan.map((p) => {
+        const paid = p.status === 'PAID';
+        return (
+          <div key={p.sequence} className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="min-w-0 flex-1">
+              <span className="font-semibold text-zinc-900">
+                {p.label ?? `Échéance ${p.sequence}`}
+              </span>{' '}
+              <span className="text-zinc-500">· {paymentMethodLabel(p.method)}</span>
+            </span>
+            <span className="font-semibold text-zinc-900">
+              {(p.amountCents / 100).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €
+            </span>
+            {paid ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-800 ring-1 ring-emerald-200/80">
+                Réglé
+              </span>
+            ) : (
+              <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800 ring-1 ring-amber-200/80">
+                En attente
+              </span>
+            )}
+            {!locked ? (
+              <button
+                type="button"
+                disabled={busy === p.sequence}
+                onClick={() => settle(p.sequence, !paid)}
+                className={[
+                  'rounded-lg px-2.5 py-1 text-[11px] font-semibold transition disabled:opacity-50',
+                  paid
+                    ? 'text-zinc-600 hover:bg-zinc-100'
+                    : 'bg-[#416B9F] text-white hover:bg-[#365b87]',
+                ].join(' ')}
+              >
+                {busy === p.sequence ? '…' : paid ? 'Annuler' : 'Marquer réglé'}
+              </button>
+            ) : null}
+            {!paid && p.method === 'ONLINE' && p.paymentLinkUrl ? (
+              <a
+                href={p.paymentLinkUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-lg px-2.5 py-1 text-[11px] font-semibold text-[#416B9F] hover:bg-[#416B9F]/10"
+              >
+                Lien
+              </a>
+            ) : null}
+          </div>
+        );
+      })}
+      <p className="text-[10px] leading-relaxed text-zinc-500">
+        Régler l’acompte confirme la réservation. Si le solde est en ligne, le 2e lien est envoyé automatiquement après l’acompte.
+      </p>
+    </div>
+  );
+}
+
 function PricingBlockPresent(
   props: Readonly<{
     reservation: Reservation;
@@ -223,11 +345,15 @@ function PricingBlockPresent(
   const d = props.reservation.details!;
   const extrasCatalog = useExtrasStore((s) => s.extras);
   const couponsCatalog = useCouponsStore((s) => s.coupons);
-  const couponRedemptions = useCouponsStore((s) => s.redemptions);
+  const reservationItems = useReservationsStore((s) => s.items);
+  const allReservations = useMemo(
+    () => reservationItems.map((s) => deserializeReservation(s)),
+    [reservationItems],
+  );
   const pricing = useMemo(
     () =>
-      computeReservationPricingDisplay(props.reservation, extrasCatalog, couponsCatalog, couponRedemptions),
-    [props.reservation, extrasCatalog, couponsCatalog, couponRedemptions],
+      computeReservationPricingDisplay(props.reservation, extrasCatalog, couponsCatalog, allReservations),
+    [allReservations, props.reservation, extrasCatalog, couponsCatalog],
   );
   const payment = d.paymentChannel === 'online' ? 'En ligne' : 'Hors ligne';
   const rentalPrice =
@@ -242,8 +368,11 @@ function PricingBlockPresent(
   const refundsTotal = Math.round(refunds.reduce((sum, r) => sum + Number(r.amount || 0), 0) * 100) / 100;
   const cancelled = d.cancelledAt ? new Date(d.cancelledAt).toLocaleString('fr-FR') : null;
   const status = resolveReservationStatus(d);
+  const paymentCtx = reservationPaymentContext(props.reservation, extrasCatalog);
   const isOnline = d.paymentChannel === 'online';
-  const isPaid = Boolean(d.paymentCapturedAt) || status === 'reserved_paid';
+  const isFullyPaid = isReservationFullyPaid(paymentCtx, d);
+  const hasAnyPayment = isFullyPaid || Boolean(d.paymentCapturedAt) || status === 'reserved_paid';
+  const isPaid = hasAnyPayment;
   const hasDeposit = Boolean(d.depositAmount?.trim());
   const depositHoldPlaced = Boolean(props.stripeDepositPaymentIntentId);
   const depositHoldMissing = isOnline && isPaid && hasDeposit && !depositHoldPlaced;
@@ -305,9 +434,9 @@ function PricingBlockPresent(
             </select>
           ) : (
             <span
-              className={`mt-1.5 inline-flex rounded-lg px-2.5 py-1 text-xs font-semibold ${statusBadgeClass(status, d)}`}
+              className={`mt-1.5 inline-flex rounded-lg px-2.5 py-1 text-xs font-semibold ${statusBadgeClass(status, d, paymentCtx)}`}
             >
-              {statusDisplayLabel(status, d)}
+              {statusDisplayLabel(status, d, paymentCtx)}
               {cancelled && status === 'cancelled' ? ` · ${cancelled}` : ''}
             </span>
           )}
@@ -328,9 +457,19 @@ function PricingBlockPresent(
                 {pricing.couponLabel} · −{pricing.couponDiscountEuros.toFixed(2).replace('.', ',')} €
               </p>
             ) : null}
+            {pricing.storeCreditAppliedEuros != null && pricing.storeCreditAppliedEuros > 0 ? (
+              <p className="mt-0.5 text-[10px] font-medium text-emerald-700">
+                Avoir client · −{pricing.storeCreditAppliedEuros.toFixed(2).replace('.', ',')} €
+              </p>
+            ) : null}
             {pricing.storedTotalMismatch ? (
-              <p className="mt-1 text-[10px] font-medium text-amber-700">
-                Total enregistré obsolète — le montant recalculé sera appliqué à la prochaine sauvegarde.
+              <p className="mt-1 text-[10px] font-medium leading-snug text-amber-700">
+                Total enregistré{' '}
+                {pricing.storedTotalTtcEuros != null
+                  ? `(${pricing.storedTotalTtcEuros.toFixed(2).replace('.', ',')} €)`
+                  : ''}{' '}
+                obsolète — le recalcul ({pricing.totalTtcEuros?.toFixed(2).replace('.', ',')} €) sera appliqué à la
+                prochaine sauvegarde. Cela ne remet pas en cause le paiement déjà encaissé.
               </p>
             ) : null}
           </div>
@@ -350,6 +489,9 @@ function PricingBlockPresent(
         ) : null}
         <InfoRow icon={Tag} label="Remise manuelle" value={manual} />
         <InfoRow icon={Calendar} label="Échéances" value={`${d.installments} fois`} />
+        {props.reservation.installmentPlan && props.reservation.installmentPlan.length >= 2 ? (
+          <InstallmentPlanRows reservation={props.reservation} locked={props.locked} />
+        ) : null}
         <InfoRow icon={CircleCheck} label="Paiement encaissé" value={paymentCaptured} />
         <InfoRow icon={ShieldCheck} label="Caution encaissée (suivi manuel)" value={depositCaptured} />
         <InfoRow icon={Send} label="Email confirmation" value={mailSent} />
@@ -426,6 +568,7 @@ function ReservationIconActions(props: Readonly<{
   onResendSignedContractEmail: (id: string) => Promise<void>;
   onPreviewContract: (id: string) => Promise<void>;
   onDownloadContract: (id: string) => Promise<void>;
+  onDownloadRefundReceipt?: (id: string) => Promise<void>;
   onSyncStripe?: (id: string) => Promise<void>;
   onRefund: (id: string) => void;
   onCancel: (id: string) => void;
@@ -441,9 +584,10 @@ function ReservationIconActions(props: Readonly<{
     onResendEmail,
     onSendContractEmail,
     onResendSignedContractEmail,
-    onPreviewContract,
-    onDownloadContract,
-    onSyncStripe,
+  onPreviewContract,
+  onDownloadContract,
+  onDownloadRefundReceipt,
+  onSyncStripe,
     onRefund,
     onCancel,
     onRestore,
@@ -457,11 +601,17 @@ function ReservationIconActions(props: Readonly<{
     !isOffline && resolveReservationStatus(details) === 'pending_payment';
   const cancelled = isReservationCancelled(details);
   const status = resolveReservationStatus(details);
-  const isPaid = Boolean(details?.paymentCapturedAt) || status === 'reserved_paid';
+  const paymentCtx = { installmentPlan: r.installmentPlan };
+  const isFullyPaid = isReservationFullyPaid(paymentCtx, details);
+  const hasAnyPayment = isFullyPaid || Boolean(details?.paymentCapturedAt) || status === 'reserved_paid';
+  const isPaid = hasAnyPayment;
   const hasDeposit = Boolean(details?.depositAmount?.trim());
   const depositHoldPlaced = Boolean(r.stripeDepositPaymentIntentId);
   const depositHoldMissing = !isOffline && isPaid && hasDeposit && !depositHoldPlaced;
   const contractSigned = Boolean(r.rentalContractSigned);
+  const refunds = Array.isArray(details?.refunds) ? details.refunds : [];
+  const hasRefunds =
+    status === 'refunded' || status === 'partially_refunded' || refunds.length > 0;
   /** Verrouillage édition (pas les emails / PDF après signature). */
   const dataLocked = locked;
   const contractDownloadTone = contractSigned ? 'success' : 'default';
@@ -494,8 +644,16 @@ function ReservationIconActions(props: Readonly<{
       ) : null}
 
       <IconActionButton
-        label={dataLocked ? disabledHint : isPaid ? 'Paiement encaissé' : 'Marquer paiement encaissé'}
-        tone={dataLocked ? 'muted' : isPaid ? 'success' : 'default'}
+        label={
+          dataLocked
+            ? disabledHint
+            : isFullyPaid
+              ? 'Paiement encaissé'
+              : hasAnyPayment
+                ? 'Acompte réglé'
+                : 'Marquer paiement encaissé'
+        }
+        tone={dataLocked ? 'muted' : hasAnyPayment ? 'success' : 'default'}
         disabled={dataLocked}
         onClick={() => onPatch(r.id, statusAfterPaymentCaptured())}
       >
@@ -586,6 +744,16 @@ function ReservationIconActions(props: Readonly<{
         <FileDown className={icon} strokeWidth={2} aria-hidden />
       </IconActionButton>
 
+      {hasRefunds && onDownloadRefundReceipt ? (
+        <IconActionButton
+          label="Télécharger le justificatif de remboursement (PDF)"
+          tone="default"
+          onClick={() => void onDownloadRefundReceipt(r.id)}
+        >
+          <Receipt className={icon} strokeWidth={2} aria-hidden />
+        </IconActionButton>
+      ) : null}
+
       {pendingOnline && onSyncStripe ? (
         <IconActionButton
           label={dataLocked ? disabledHint : 'Synchroniser paiement Stripe'}
@@ -597,7 +765,7 @@ function ReservationIconActions(props: Readonly<{
         </IconActionButton>
       ) : null}
 
-      {cancelled ? (
+      {canRestoreReservation(details, status) ? (
         <IconActionButton
           label={dataLocked ? disabledHint : 'Rétablir la réservation'}
           tone={dataLocked ? 'muted' : 'success'}
@@ -606,7 +774,7 @@ function ReservationIconActions(props: Readonly<{
         >
           <RotateCcw className={icon} strokeWidth={2} aria-hidden />
         </IconActionButton>
-      ) : (
+      ) : !cancelled ? (
         <IconActionButton
           label="Annuler la réservation"
           tone="danger"
@@ -614,7 +782,7 @@ function ReservationIconActions(props: Readonly<{
         >
           <Ban className={icon} strokeWidth={2} aria-hidden />
         </IconActionButton>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -641,6 +809,89 @@ function BoatBlock(props: Readonly<{ boat: Boat | null; fleetName: string; boatT
   );
 }
 
+function OwnerMinimalReservationView(props: Readonly<{
+  reservation: Reservation;
+  layout: 'drawer' | 'embedded';
+  presence: { present: boolean; phase: 'enter' | 'exit' };
+  onClose?: () => void;
+}>) {
+  const { reservation: r, layout, presence, onClose } = props;
+  const periodDate = fmtDateLong(r.start);
+  const periodHours = sameCalendarDay(r.start, r.end)
+    ? `${fmtTime(r.start)} → ${fmtTime(r.end)}`
+    : `${fmtTime(r.start)} (départ) · ${fmtTime(r.end)} (retour)`;
+
+  const content = (
+    <div className="space-y-4 p-4 sm:p-5">
+      <div className="rounded-2xl border border-slate-200/90 bg-slate-50/80 px-4 py-4 shadow-sm">
+        <p className="text-sm font-semibold text-slate-800">Créneau réservé</p>
+        <p className="mt-3 text-sm text-slate-600">
+          Consultation limitée : seuls la date et les horaires sont affichés. Pour toute question, contactez Bleu Calanque.
+        </p>
+        <div className="mt-4 space-y-3">
+          <InfoRow icon={Calendar} label="Date" value={periodDate} highlight />
+          <InfoRow icon={Clock} label="Horaires" value={periodHours} highlight />
+        </div>
+      </div>
+    </div>
+  );
+
+  const header = (
+    <div className="flex items-start gap-2 border-b border-zinc-100 px-3 py-2 sm:px-4">
+      <div className="min-w-0 flex-1 pt-0.5">
+        <p id="resa-detail-title" className="text-sm font-bold tracking-tight text-zinc-900">
+          Créneau réservé
+        </p>
+        <p className="text-[11px] text-zinc-500">Lecture seule</p>
+      </div>
+      {layout === 'drawer' && onClose ? (
+        <button
+          type="button"
+          onClick={onClose}
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-zinc-200/90 bg-white text-zinc-600 shadow-sm hover:bg-zinc-50"
+          aria-label="Fermer"
+        >
+          <X className="h-4 w-4" strokeWidth={2} aria-hidden />
+        </button>
+      ) : null}
+    </div>
+  );
+
+  if (layout === 'embedded') {
+    return (
+      <div className="flex max-h-[min(42rem,72vh)] flex-col rounded-2xl border border-zinc-200/90 bg-white shadow-sm ring-2 ring-[#416B9F]/15 ring-offset-2">
+        {header}
+        {content}
+      </div>
+    );
+  }
+
+  return (
+    <Portal>
+      <div className="fixed inset-0 z-60">
+        <button
+          type="button"
+          className={['absolute inset-0 bg-black/30 bc-animate', presence.phase === 'enter' ? 'bc-overlay-enter' : 'bc-overlay-exit'].join(' ')}
+          aria-label="Fermer"
+          onClick={onClose}
+        />
+        <div
+          className={[
+            'absolute right-0 top-0 flex h-full w-full max-w-md flex-col overflow-hidden bg-white shadow-2xl bc-animate',
+            presence.phase === 'enter' ? 'bc-panel-enter' : 'bc-panel-exit',
+          ].join(' ')}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="resa-detail-title"
+        >
+          {header}
+          <div className="min-h-0 flex-1 overflow-y-auto">{content}</div>
+        </div>
+      </div>
+    </Portal>
+  );
+}
+
 export function ReservationDetailsPanel(props: Readonly<{
   layout?: 'drawer' | 'embedded';
   presence?: { present: boolean; phase: 'enter' | 'exit' };
@@ -648,6 +899,7 @@ export function ReservationDetailsPanel(props: Readonly<{
   reservations: Reservation[];
   boatsCatalog: Boat[];
   fleetsCatalog: Fleet[];
+  ownerReadOnly?: boolean;
   onClose?: () => void;
   onEdit?: (id: string) => void;
   onOpenReservation?: (id: string) => void;
@@ -659,6 +911,7 @@ export function ReservationDetailsPanel(props: Readonly<{
     reservations,
     boatsCatalog,
     fleetsCatalog,
+    ownerReadOnly = false,
     onClose,
     onEdit,
     onOpenReservation,
@@ -787,6 +1040,28 @@ export function ReservationDetailsPanel(props: Readonly<{
     }
   }
 
+  async function downloadRefundReceipt(id: string) {
+    setEmailFeedback(null);
+    try {
+      const res = await api.get(`/reservations/${id}/refund-receipt/download`, {
+        responseType: 'blob',
+      });
+      const filename = filenameFromContentDisposition(
+        typeof res.headers['content-disposition'] === 'string' ? res.headers['content-disposition'] : undefined,
+        `justificatif-remboursement-${id}.pdf`,
+      );
+      const url = URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      setEmailFeedback('Justificatif de remboursement téléchargé.');
+    } catch (err) {
+      setEmailFeedback(extractApiErrorMessage(err, 'Téléchargement du justificatif impossible.'));
+    }
+  }
+
   async function resendSignedContractEmail(id: string) {
     setEmailFeedback(null);
     try {
@@ -801,9 +1076,18 @@ export function ReservationDetailsPanel(props: Readonly<{
     if (!assertEditable(id)) return;
     setEmailFeedback(null);
     try {
-      await api.post(`/reservations/${id}/sync-stripe-payment`);
+      const { data } = await api.post<{
+        stripeRefundSync?: { importedCents: number; status: string | null };
+      }>(`/reservations/${id}/sync-stripe-payment`);
       await refreshReservations();
-      setEmailFeedback('Paiement Stripe synchronisé — statut mis à jour.');
+      const imported = data?.stripeRefundSync?.importedCents ?? 0;
+      if (imported > 0) {
+        setEmailFeedback(
+          `Synchronisé — remboursement Stripe ${(imported / 100).toFixed(2).replace('.', ',')} € importé (statut mis à jour).`,
+        );
+      } else {
+        setEmailFeedback('Paiement Stripe synchronisé — statut mis à jour.');
+      }
     } catch (err) {
       setEmailFeedback(extractApiErrorMessage(err, 'Synchronisation impossible.'));
     }
@@ -888,6 +1172,7 @@ export function ReservationDetailsPanel(props: Readonly<{
 
   async function handleResolutionSuccess(message: string) {
     await refreshReservations();
+    void useCouponsStore.getState().refresh();
     void useNotificationsStore.getState().pollServerNotifications();
     setEmailFeedback(message);
   }
@@ -908,6 +1193,7 @@ export function ReservationDetailsPanel(props: Readonly<{
         { reason: payload.reason || undefined, notifyClient: payload.notifyClient },
       );
       await refreshReservations();
+      void useCouponsStore.getState().refresh();
       setCancelDialogId(null);
       if (payload.notifyClient && data?.emailSent) {
         setEmailFeedback('Réservation annulée — e-mail envoyé au client.');
@@ -945,6 +1231,17 @@ export function ReservationDetailsPanel(props: Readonly<{
   if (layout === 'drawer' && !presence.present) return null;
   const r = reservations.find((x) => x.id === reservationId) ?? null;
   if (!r) return null;
+
+  if (ownerReadOnly) {
+    return (
+      <OwnerMinimalReservationView
+        reservation={r}
+        layout={layout}
+        presence={presence}
+        onClose={onClose}
+      />
+    );
+  }
 
   const rForLock: Reservation = { ...r, checkInDone, checkOutDone };
   const calendarLocked = isReservationLockedFromReservation(rForLock);
@@ -987,7 +1284,7 @@ export function ReservationDetailsPanel(props: Readonly<{
 
   const detailBlocks = (
     <>
-      <div className={`rounded-2xl border px-4 py-3 shadow-sm ${reservationSummaryCardClass(status)}`}>
+      <div className={`rounded-2xl border px-4 py-3 shadow-sm ${reservationSummaryCardClass(status, d)}`}>
         <p className="text-base font-bold text-zinc-900">{summaryTitle}</p>
         <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-600">
           <span className="inline-flex items-center gap-1">
@@ -1002,8 +1299,10 @@ export function ReservationDetailsPanel(props: Readonly<{
         </p>
         <div className="mt-2 flex flex-wrap items-center gap-2">
           {status && d ? (
-            <span className={`inline-flex rounded-lg px-2.5 py-1 text-xs font-semibold ${statusBadgeClass(status, d)}`}>
-              {statusDisplayLabel(status, d)}
+            <span
+              className={`inline-flex rounded-lg px-2.5 py-1 text-xs font-semibold ${statusBadgeClass(status, d, reservationPaymentContext(r, extrasCatalog))}`}
+            >
+              {statusDisplayLabel(status, d, reservationPaymentContext(r, extrasCatalog))}
             </span>
           ) : null}
           {contractStatus ? <RentalContractStatusBadge status={contractStatus} /> : null}
@@ -1105,6 +1404,7 @@ export function ReservationDetailsPanel(props: Readonly<{
           onResendSignedContractEmail={resendSignedContractEmail}
           onPreviewContract={previewContractPdf}
           onDownloadContract={downloadSignedContract}
+          onDownloadRefundReceipt={downloadRefundReceipt}
           onSyncStripe={syncStripePayment}
           onRefund={openRefundForm}
           onCancel={openCancelDialog}

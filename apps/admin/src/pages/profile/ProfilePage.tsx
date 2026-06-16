@@ -5,7 +5,7 @@ import { useAuthStore, type AuthUserSlice } from '@/stores/auth';
 import { formatPhoneInput } from '@/lib/phone';
 import { useDefaultPageFilters } from '@/contexts/PageFiltersContext';
 import { fileToCompressedDataUrl } from '@/lib/mediaPhotos';
-import { isOwnerUser } from '@/lib/userRoles';
+import { isOwnerUser, isDeskUser, isDafUser } from '@/lib/userRoles';
 
 type Civility = '' | 'M.' | 'Mme' | 'Mx';
 
@@ -187,12 +187,23 @@ export function ProfilePage() {
     [],
   );
 
-  if (mustChangePassword && isOwnerUser(storeUser.role)) {
+  if (mustChangePassword && (isOwnerUser(storeUser.role) || isDeskUser(storeUser.role) || isDafUser(storeUser.role))) {
     return <Navigate to="/login" replace />;
   }
 
+  const profileTourId = isOwnerUser(storeUser.role)
+    ? 'owner-profile-main'
+    : isDeskUser(storeUser.role)
+      ? 'admin-profile-main'
+      : isDafUser(storeUser.role)
+        ? 'daf-profile-main'
+        : undefined;
+
   return (
-    <div className="max-w-3xl space-y-6">
+    <div
+      className="max-w-3xl space-y-6"
+      data-tour={profileTourId}
+    >
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-zinc-900">Profil</h1>
         <p className="mt-2 text-[15px] leading-relaxed text-zinc-500">

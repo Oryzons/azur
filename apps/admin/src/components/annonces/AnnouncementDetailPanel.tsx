@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ExternalLink, MapPin, Megaphone, Trash2 } from 'lucide-react';
+import { ExternalLink, MapPin, Megaphone, Pencil, Trash2 } from 'lucide-react';
 import {
   announcementCoverSrc,
   announcementTargetSummary,
@@ -14,10 +14,11 @@ export function AnnouncementDetailPanel(
     fleets: Fleet[];
     boats: Boat[];
     publicUrl: string;
+    onEdit: () => void;
     onDelete: () => void;
   }>,
 ) {
-  const { announcement: a, fleets, boats, publicUrl, onDelete } = props;
+  const { announcement: a, fleets, boats, publicUrl, onEdit, onDelete } = props;
   const [photoIdx, setPhotoIdx] = useState(0);
 
   useEffect(() => {
@@ -57,6 +58,14 @@ export function AnnouncementDetailPanel(
             <ExternalLink className="h-3.5 w-3.5" />
             Site public
           </a>
+          <button
+            type="button"
+            onClick={onEdit}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-200/90 bg-white px-3 py-2 text-xs font-semibold text-zinc-700 shadow-sm hover:bg-zinc-50"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+            Modifier
+          </button>
           <button
             type="button"
             onClick={onDelete}
@@ -117,11 +126,6 @@ export function AnnouncementDetailPanel(
             <p className="mt-1 text-sm font-medium text-zinc-900">{linkModeLabel(a.link.kind)}</p>
           </div>
         </div>
-
-        <p className="text-xs text-zinc-500">
-          Les annonces actives sont visibles sur la page publique. La modification n&apos;est pas encore disponible :
-          supprimez et recréez si besoin.
-        </p>
       </div>
     </div>
   );

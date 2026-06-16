@@ -15,10 +15,12 @@ export type Extra = {
   billingUnit: ExtraBillingUnit;
   /** Taux de TVA (%) ex: 20 */
   vatRate: number;
-  /** null = stock illimité */
+  /** null = stock illimité ; sinon plafond par jour civil */
   stock: number | null;
   /** Canal de paiement proposé (par défaut: en ligne). */
   paymentChannel: ExtraPaymentChannel;
+  /** Clé d'icône (lucide) affichée sur le calendrier. */
+  icon: string | null;
   enabled: boolean;
   createdAt: string;
 };
@@ -43,7 +45,7 @@ interface ExtrasState {
   hydrated: boolean;
   refresh: () => Promise<void>;
   addExtra: (e: AddExtraPayload) => { ok: true; id: string } | { ok: false; error: string };
-  updateExtra: (e: UpdateExtraPayload) => { ok: true } | { ok: false; error: string };
+  updateExtra: (e: UpdateExtraPayload) => Promise<{ ok: true } | { ok: false; error: string }>;
   removeExtra: (id: string) => void;
 }
 
@@ -91,6 +93,7 @@ export const useExtrasStore = create<ExtrasState>()(
               vatRate: vat,
               stock,
               paymentChannel: e.paymentChannel ?? 'online',
+              icon: e.icon ?? null,
             },
           ],
         }));
@@ -105,6 +108,7 @@ export const useExtrasStore = create<ExtrasState>()(
             vatRate: vat,
             stock,
             paymentChannel: e.paymentChannel ?? 'online',
+            icon: e.icon ?? null,
             enabled: e.enabled,
           },
           set,
@@ -112,7 +116,7 @@ export const useExtrasStore = create<ExtrasState>()(
         return { ok: true, id };
       },
 
-    updateExtra: (e: UpdateExtraPayload) => {
+    updateExtra: async (e: UpdateExtraPayload) => {
         const prev = get().extras.find((x) => x.id === e.id);
         if (!prev) return { ok: false, error: 'Extra introuvable.' };
 
@@ -139,39 +143,43 @@ export const useExtrasStore = create<ExtrasState>()(
           vatRate: vat,
           stock,
           paymentChannel: e.paymentChannel ?? 'online',
+          icon: e.icon ?? null,
           enabled: e.enabled,
         });
 
+        const optimistic: Extra = {
+          ...prev,
+          ...e,
+          name,
+          description: e.description.trim(),
+          priceValue: price,
+          vatRate: vat,
+          stock,
+          paymentChannel: e.paymentChannel ?? 'online',
+          icon: e.icon ?? null,
+        };
+
         set((s) => ({
-          extras: s.extras.map((x) =>
-            x.id === e.id
-              ? {
-                  ...x,
-                  ...e,
-                  name,
-                  description: e.description.trim(),
-                  priceValue: price,
-                  vatRate: vat,
-                  stock,
-                  paymentChannel: e.paymentChannel ?? 'online',
-                }
-              : x,
-          ),
+          extras: s.extras.map((x) => (x.id === e.id ? optimistic : x)),
         }));
 
-        if (isPersistedExtraId(e.id)) {
-          void api
-            .put(`/extras/${e.id}`, payload)
-            .then(({ data }) => {
-              set((s) => ({
-                extras: s.extras.map((x) => (x.id === e.id ? mapExtraFromApi(data) : x)),
-              }));
-            })
-            .catch(() => {
-              /* Garde l'état local optimiste ; pas de refresh qui annule la saisie. */
-            });
+        if (!isPersistedExtraId(e.id)) {
+          return { ok: true };
         }
-        return { ok: true };
+
+        try {
+          const { data } = await api.put(`/extras/${e.id}`, payload);
+          const real = mapExtraFromApi(data);
+          set((s) => ({
+            extras: s.extras.map((x) => (x.id === e.id ? real : x)),
+          }));
+          return { ok: true };
+        } catch (err: unknown) {
+          set((s) => ({
+            extras: s.extras.map((x) => (x.id === e.id ? prev : x)),
+          }));
+          return { ok: false, error: extractExtraApiError(err, 'Impossible de modifier l’extra.') };
+        }
       },
 
     removeExtra: (id: string) => {
@@ -185,6 +193,14 @@ export const useExtrasStore = create<ExtrasState>()(
 
 function tmpIdNow() {
   return `tmp_${Date.now().toString(16)}_${Math.random().toString(16).slice(2)}`;
+}
+
+function extractExtraApiError(err: unknown, fallback: string): string {
+  const e = err as { response?: { data?: { message?: unknown } } };
+  const msg = e?.response?.data?.message;
+  if (Array.isArray(msg)) return msg.join(' ') || fallback;
+  if (typeof msg === 'string' && msg.trim()) return msg;
+  return fallback;
 }
 
 function isPersistedExtraId(id: string) {
@@ -206,6 +222,7 @@ function mapExtraFromApi(x: any): Extra {
     vatRate: Number(x?.vatRate ?? 0),
     stock: x?.stock === null || x?.stock === undefined ? null : Number(x.stock),
     paymentChannel,
+    icon: x?.icon ? String(x.icon) : null,
     enabled: Boolean(x?.enabled ?? true),
     createdAt: x?.createdAt ? new Date(x.createdAt).toISOString() : new Date().toISOString(),
   };
@@ -220,6 +237,7 @@ function extraToApiPayload(e: {
   vatRate: number;
   stock: number | null;
   paymentChannel: ExtraPaymentChannel;
+  icon: string | null;
   enabled: boolean;
 }) {
   let billingUnit = 'LOCATION';
@@ -234,6 +252,7 @@ function extraToApiPayload(e: {
     vatRate: e.vatRate,
     stock: e.stock,
     paymentChannel: e.paymentChannel === 'offline' ? 'OFFLINE' : 'ONLINE',
+    icon: e.icon,
     enabled: e.enabled,
   };
 }
@@ -249,6 +268,7 @@ async function createExtraApi(
     vatRate: number;
     stock: number | null;
     paymentChannel: ExtraPaymentChannel;
+    icon: string | null;
     enabled: boolean;
   },
   set: (fn: any) => void,

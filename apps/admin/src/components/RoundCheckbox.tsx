@@ -5,12 +5,14 @@ type Props = Readonly<{
   hint?: string;
   disabled?: boolean;
   className?: string;
+  id?: string;
 }>;
 
-export function RoundCheckbox({ checked, onChange, label, hint, disabled, className = '' }: Props) {
+export function RoundCheckbox({ checked, onChange, label, hint, disabled, className = '', id }: Props) {
   const control = (
     <span className="inline-flex relative shrink-0 justify-center items-center w-5 h-5">
       <input
+        id={id}
         type="checkbox"
         checked={checked}
         disabled={disabled}

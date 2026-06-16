@@ -5,6 +5,7 @@ export const ROLE_LABELS: Record<MemberRole, string> = {
   agent: 'Agent',
   proprietaire: 'Propriétaire',
   client: 'Client',
+  daf: 'DAF',
 };
 
 export const ROLE_STYLES: Record<
@@ -15,6 +16,7 @@ export const ROLE_STYLES: Record<
   client: { dot: 'bg-blue-500', badge: { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' } },
   proprietaire: { dot: 'bg-violet-500', badge: { bg: 'bg-violet-50', text: 'text-violet-700', border: 'border-violet-200' } },
   agent: { dot: 'bg-orange-500', badge: { bg: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-200' } },
+  daf: { dot: 'bg-emerald-500', badge: { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200' } },
 };
 
 export const CLIENT_TYPE_LABELS: Record<ClientType, string> = {

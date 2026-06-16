@@ -7,6 +7,7 @@ import {
 } from '@bleu-calanque/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { CouponDiscountKind } from '@prisma/client';
+import { countsTowardCouponUsage } from '@bleu-calanque/shared';
 import { validateInput } from '../common/validation/validate-input';
 import { AuditService } from '../common/audit/audit.service';
 import { AuditAction, AuditEntity } from '../common/audit/audit.constants';
@@ -183,22 +184,34 @@ export class CouponsService {
     return [...keys];
   }
 
+  private reservationRowClientKey(row: {
+    clientMemberId: string | null;
+    clientEmail: string | null;
+  }): string {
+    return row.clientMemberId?.trim() || row.clientEmail?.trim().toLowerCase() || '';
+  }
+
   /**
-   * Ré-enregistre une utilisation coupon pour une réservation (ex. après rétablissement).
-   * N’altère pas les réservations — uniquement CouponRedemption.
+   * Enregistre une utilisation coupon (journal) si la location est terminée et valide.
    */
   async recordRedemptionForReservation(row: {
     couponCode: string | null;
     clientMemberId: string | null;
     clientEmail: string | null;
     startAt: Date;
+    endAt: Date;
+    status: string;
+    cancelledAt: Date | null;
+    paymentCapturedAt: Date | null;
   }): Promise<{ recorded: boolean }> {
+    if (!countsTowardCouponUsage(row, new Date())) return { recorded: false };
+
     const code = row.couponCode?.trim().replaceAll(/\s+/g, '').toUpperCase();
     if (!code) return { recorded: false };
     const coupon = await this.prisma.coupon.findUnique({ where: { code } });
     if (!coupon) return { recorded: false };
 
-    const clientKey = row.clientMemberId?.trim() || row.clientEmail?.trim().toLowerCase() || '';
+    const clientKey = this.reservationRowClientKey(row);
     if (!clientKey) return { recorded: false };
 
     const existing = await this.prisma.couponRedemption.findFirst({
@@ -217,32 +230,82 @@ export class CouponsService {
       action: AuditAction.CREATE,
       entity: AuditEntity.COUPON_REDEMPTION,
       entityId: coupon.id,
-      newData: { couponCode: coupon.code, clientKey, source: 'reservation_restore' },
+      newData: { couponCode: coupon.code, clientKey, source: 'reservation_completed' },
     });
     return { recorded: true };
   }
 
-  /** Rattrape les utilisations manquantes à partir des réservations actives (idempotent). */
-  async syncRedemptionsFromReservations(couponId: string): Promise<{ created: number }> {
+  /** Retire l’utilisation journalière liée à une réservation (annulation / remboursement). */
+  async removeRedemptionForReservation(row: {
+    couponCode: string | null;
+    clientMemberId: string | null;
+    clientEmail: string | null;
+    startAt: Date;
+  }): Promise<{ removed: boolean }> {
+    const code = row.couponCode?.trim().replaceAll(/\s+/g, '').toUpperCase();
+    if (!code) return { removed: false };
+    const coupon = await this.prisma.coupon.findUnique({ where: { code } });
+    if (!coupon) return { removed: false };
+
+    const clientKey = this.reservationRowClientKey(row);
+    if (!clientKey) return { removed: false };
+
+    const clientKeys = await this.resolveClientKeysForDeletion(clientKey);
+    const result = await this.prisma.couponRedemption.deleteMany({
+      where: {
+        couponId: coupon.id,
+        clientKey: { in: clientKeys },
+        redeemedAt: row.startAt,
+      },
+    });
+    if (result.count > 0) {
+      await this.audit.log({
+        action: AuditAction.DELETE,
+        entity: AuditEntity.COUPON_REDEMPTION,
+        entityId: coupon.id,
+        oldData: {
+          couponCode: coupon.code,
+          clientKey,
+          clientKeys,
+          redeemedAt: row.startAt.toISOString(),
+          source: 'reservation_voided',
+        },
+      });
+    }
+    return { removed: result.count > 0 };
+  }
+
+  /** Aligne le journal avec les locations terminées (idempotent). */
+  async syncRedemptionsFromReservations(couponId: string): Promise<{ created: number; removed: number }> {
     const coupon = await this.prisma.coupon.findUnique({ where: { id: couponId } });
     if (!coupon) throw new NotFoundException('Coupon introuvable.');
 
     const reservations = await this.prisma.reservation.findMany({
-      where: { couponCode: coupon.code, status: { not: 'CANCELLED' } },
+      where: { couponCode: coupon.code },
       select: {
         couponCode: true,
         clientMemberId: true,
         clientEmail: true,
         startAt: true,
+        endAt: true,
+        status: true,
+        cancelledAt: true,
+        paymentCapturedAt: true,
       },
     });
 
     let created = 0;
+    let removed = 0;
     for (const row of reservations) {
-      const result = await this.recordRedemptionForReservation(row);
-      if (result.recorded) created += 1;
+      if (countsTowardCouponUsage(row, new Date())) {
+        const result = await this.recordRedemptionForReservation(row);
+        if (result.recorded) created += 1;
+      } else {
+        const result = await this.removeRedemptionForReservation(row);
+        if (result.removed) removed += 1;
+      }
     }
-    return { created };
+    return { created, removed };
   }
 
   async removeRedemptionsForClient(couponId: string, raw: { clientKey: string }) {

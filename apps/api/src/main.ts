@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { json, raw, urlencoded } from 'express';
+import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { ConfigService } from '@nestjs/config';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
@@ -11,6 +12,12 @@ const JSON_BODY_LIMIT = '25mb';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true, bodyParser: false });
+  app.use(
+    helmet({
+      contentSecurityPolicy: false,
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+    }),
+  );
   /** Corps brut obligatoire pour stripe.webhooks.constructEvent (signature HMAC). */
   app.use('/api/v1/webhooks/stripe', raw({ type: 'application/json' }));
   app.use(json({ limit: JSON_BODY_LIMIT }));
@@ -26,6 +33,7 @@ async function bootstrap() {
   app.useGlobalPipes(
     new ValidationPipe({
       transform: true,
+      transformOptions: { enableImplicitConversion: true },
       whitelist: true,
       forbidNonWhitelisted: true,
       forbidUnknownValues: true,
@@ -34,6 +42,6 @@ async function bootstrap() {
   app.useGlobalFilters(new HttpExceptionFilter());
 
   await app.listen(port);
-  new Logger('Bootstrap').log(`API http://localhost:${port}`);
+  new Logger('Bootstrap').log(`API listening on http://localhost:${port}/api/v1`);
 }
 bootstrap();

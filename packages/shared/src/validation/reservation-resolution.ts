@@ -27,6 +27,8 @@ export const reservationResolutionStoreCreditSchema = z.object({
 export const reservationResolutionRefundSchema = z.object({
   type: z.literal('refund'),
   amount: z.number().positive().max(999_999),
+  /** Annule la réservation en même temps que le remboursement (défaut : oui). */
+  cancelReservation: z.boolean().optional().default(true),
   ...baseFields,
 });
 

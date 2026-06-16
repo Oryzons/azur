@@ -14,6 +14,8 @@ enum UserRole {
   AGENT
   /// Portail propriétaire : calendrier et indisponibilités sur ses bateaux uniquement.
   OWNER
+  /// Comptabilité : accès restreint au module financier.
+  DAF
 }
 
 model User {
@@ -37,6 +39,13 @@ model User {
   ownerMemberId String?
   isActive     Boolean      @default(true)
   mustChangePassword Boolean @default(false)
+  /// Portail propriétaire — alertes cloche (réservations sur ses bateaux).
+  ownerNotifyReservationsEnabled  Boolean @default(true)
+  ownerNotifyNewReservation       Boolean @default(true)
+  ownerNotifyReservationUpdated   Boolean @default(true)
+  ownerNotifyReservationCancelled Boolean @default(true)
+  ownerNotifyReservationRestored  Boolean @default(true)
+  ownerNotifyReservationPaid      Boolean @default(true)
   lastLoginAt  DateTime?
   createdAt    DateTime     @default(now())
   refreshTokens RefreshToken[]
@@ -126,7 +135,7 @@ model Boat {
   fleetId       String?
   /// Caution location (centimes), défaut 2500 €.
   depositAmountCents Int @default(250000)
-  /// JSON sérialisé des informations supplémentaires (généralités, dimensions, motorisation, équipements, assurance).
+  /// JSON sérialisé des informations supplémentaires (généralités, dimensions, motorisation, équipements, légalité).
   detailsJson   String?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
@@ -164,6 +173,7 @@ enum MemberRole {
   AGENT
   OWNER
   CLIENT
+  DAF
 }
 
 enum ClientType {
@@ -223,6 +233,8 @@ model Member {
   permManageMembers     Boolean @default(false)
   permManageBoats       Boolean @default(false)
   permManageReservations Boolean @default(false)
+  /// Accès au module Comptabilité (DAF).
+  permComptabilite      Boolean @default(false)
 
   boatsOwned Boat[] @relation("MemberOwnedBoats")
   reservationsAsClient Reservation[] @relation("ReservationClient")
@@ -237,6 +249,20 @@ model Member {
 enum PaymentChannel {
   ONLINE
   OFFLINE
+}
+
+/// Mode de règlement d'une échéance.
+enum PaymentMethod {
+  ONLINE
+  CASH
+  CARD_ONSITE
+  CHECK
+  TRANSFER
+}
+
+enum InstallmentStatus {
+  PENDING
+  PAID
 }
 
 enum ReservationStatus {
@@ -281,6 +307,8 @@ model Reservation {
   couponCode    String?
   airbusBadge   String?
   installments  Int? // 1 ou 2
+  /// Pourcentage de l'acompte (1re échéance) quand installments = 2.
+  depositPercent Int?
   settlementNote String?
 
   status            ReservationStatus @default(PENDING_PAYMENT)
@@ -291,6 +319,10 @@ model Reservation {
   totalDueCents     Int?
   stripeCheckoutSessionId String?
   stripeDepositPaymentIntentId String?
+  /// Frais Stripe (centimes) pour paiement unique sans échéances.
+  stripeFeeCents    Int?
+  /// Montant net crédité sur le compte Stripe (centimes), paiement unique.
+  stripeNetCents    Int?
   paymentLinkUrl    String?
   cancelledAt   DateTime?
 
@@ -305,6 +337,7 @@ model Reservation {
 
   extras       ReservationExtra[]
   refunds      ReservationRefund[]
+  installmentPlan ReservationInstallment[]
   checkFlowSubmissions CheckFlowSubmission[]
   rentalContract       ReservationRentalContract?
   creditsIssued          MemberCredit[]
@@ -313,6 +346,31 @@ model Reservation {
   @@index([boatId])
   @@index([clientMemberId])
   @@index([startAt])
+}
+
+/// Échéance de paiement d'une réservation (sequence 1 = acompte, 2 = solde).
+model ReservationInstallment {
+  id            String   @id @default(uuid())
+  reservationId String
+  sequence      Int
+  label         String?
+  amountCents   Int
+  method        PaymentMethod     @default(ONLINE)
+  status        InstallmentStatus @default(PENDING)
+  paidAt        DateTime?
+  stripeCheckoutSessionId String?
+  /// Frais Stripe (centimes) pour cette échéance en ligne.
+  stripeFeeCents Int?
+  /// Montant net crédité sur le compte Stripe (centimes).
+  stripeNetCents Int?
+  paymentLinkUrl String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  reservation   Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+
+  @@unique([reservationId, sequence])
+  @@index([reservationId])
 }
 
 /// Plage d'indisponibilité (maintenance, usage perso, etc.) — affichée sur le calendrier.
@@ -420,6 +478,8 @@ model Extra {
   vatRate       Float
   stock         Int?
   paymentChannel PaymentChannel @default(ONLINE)
+  /// Clé d'icône (lucide) affichée sur le calendrier pour cet extra.
+  icon          String?
   enabled       Boolean        @default(true)
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
@@ -633,6 +693,8 @@ model CompanySettings {
   departureLocation   String  @default("")
   /// Lieu de retour bateau (contrats, emails).
   arrivalLocation     String  @default("")
+  /// Horaires affichés aux propriétaires (page Contact).
+  contactOpeningHours String  @default("")
   updatedAt           DateTime @updatedAt
 }
 

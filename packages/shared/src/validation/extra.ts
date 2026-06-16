@@ -16,6 +16,7 @@ export const createExtraSchema = z
     vatRate: z.number().finite().min(0).max(100),
     stock: z.union([z.number().int().min(0).max(1_000_000), z.null()]).optional(),
     paymentChannel: paymentChannelSchema.optional(),
+    icon: z.union([z.string().trim().max(40), z.null()]).optional(),
     enabled: z.boolean().optional(),
   })
   .superRefine((data, ctx) => {

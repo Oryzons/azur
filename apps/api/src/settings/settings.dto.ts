@@ -5,6 +5,7 @@ export const PARTNER_KIND_VALUES = ['NAUTIC_BASE', 'MAINTENANCE', 'INSURANCE', '
 export const PARTNER_LINKED_OFFERING_VALUES = ['BOAT_LICENSE', 'FLUVIAL', 'BOAT_RENTAL'] as const;
 
 export class CompanySettingsDto {
+  @IsOptional() @IsString() contactOpeningHours?: string;
   @IsOptional() @IsString() legalName?: string;
   @IsOptional() @IsString() tradeName?: string;
   @IsOptional() @IsString() professionalPhone?: string;

@@ -10,7 +10,12 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
-import { BOAT_TYPE_VALUES, MAX_PHOTO_DATA_URL_LENGTH, type BoatTypeValue } from '@bleu-calanque/shared';
+import {
+  BOAT_DETAILS_JSON_MAX_LENGTH,
+  BOAT_TYPE_VALUES,
+  MAX_INCOMING_MEDIA_DATA_URL_LENGTH,
+  type BoatTypeValue,
+} from '@bleu-calanque/shared';
 
 const MAX_MONEY_CENTS = 100_000_000;
 
@@ -62,7 +67,7 @@ export class CreateBoatDto {
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
-  @MaxLength(MAX_PHOTO_DATA_URL_LENGTH, { each: true })
+  @MaxLength(MAX_INCOMING_MEDIA_DATA_URL_LENGTH, { each: true })
   presentationPhotos?: string[];
 
   @IsOptional()
@@ -73,7 +78,7 @@ export class CreateBoatDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(200_000)
+  @MaxLength(BOAT_DETAILS_JSON_MAX_LENGTH)
   detailsJson?: string | null;
 
   @IsOptional()

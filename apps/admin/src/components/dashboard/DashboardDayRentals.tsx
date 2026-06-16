@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import type { Reservation } from '@/pages/calendar/reservationTypes';
 import { reservationClientLabel, reservationStatusBadge } from '@/lib/reservationUi';
+import { useExtrasStore } from '@/stores/extras';
 import { isReservationCancelled } from '@/lib/reservationStatus';
 import type { DashboardDayView } from '@/lib/dashboardDay';
 import { formatDashboardDayTitle } from '@/lib/dashboardDay';
@@ -327,8 +328,9 @@ function RentalRow(props: Readonly<{
   highlight?: boolean;
 }>) {
   const { reservation: r, boatsById, tablet, dense, highlight } = props;
+  const extrasCatalog = useExtrasStore((s) => s.extras);
   const boat = boatsById.get(r.boatId);
-  const badge = reservationStatusBadge(r);
+  const badge = reservationStatusBadge(r, extrasCatalog);
   const client = reservationClientLabel(r);
   const showClient = client && client.toLowerCase() !== r.title.trim().toLowerCase();
   const { checkInDone, checkOutDone } = checkFlags(r, tablet);

@@ -8,8 +8,10 @@ import {
   minutesSince,
   minutesToHHmmFrom,
   overlaps,
-  ROW_H,
+  planningRowMetrics,
+  PILL_LANE_GAP,
   segmentLabel,
+  ownerSegmentLabel,
   SLOT_COL_W,
   startOfDay,
 } from '@/pages/calendar/calendarConstants';
@@ -28,6 +30,7 @@ export function DayPlanning(props: Readonly<{
   onMove: React.Dispatch<React.SetStateAction<Reservation[]>>;
   onCreate: (boatId: string, day: Date, times?: Readonly<{ startTime: string; endTime: string }>) => void;
   readOnly?: boolean;
+  ownerMinimal?: boolean;
   onOpenReservation?: (id: string) => void;
   onReorderBoatRows?: (fromIndex: number, toIndex: number) => void;
   unavailabilities?: BoatUnavailability[];
@@ -41,6 +44,7 @@ export function DayPlanning(props: Readonly<{
     onMove,
     onCreate,
     readOnly,
+    ownerMinimal = false,
     onOpenReservation,
     onReorderBoatRows,
     unavailabilities = [],
@@ -153,14 +157,13 @@ export function DayPlanning(props: Readonly<{
                 (s) => s.colStart,
                 (s) => s.colEnd,
               );
-              const laneCount = Math.max(1, laneInfo.lanes);
-              const gap = 0;
-              const barH = Math.max(18, Math.floor(ROW_H / laneCount));
+              const { barH, rowHeight } = planningRowMetrics(laneInfo.lanes);
+              const gap = PILL_LANE_GAP;
               return (
                 <div key={boat.id} className="flex">
                   <div
                     className="sticky left-0 z-20 shrink-0 border-r border-zinc-200/90 bg-white shadow-[4px_0_12px_-4px_rgba(0,0,0,0.06)]"
-                    style={{ width: BOAT_COL_W, height: ROW_H }}
+                    style={{ width: BOAT_COL_W, height: rowHeight }}
                     onDragOver={
                       canReorderBoats
                         ? (e) => {
@@ -214,7 +217,7 @@ export function DayPlanning(props: Readonly<{
                       'relative z-0 flex-1',
                       dayHighlighted ? 'bg-[#416B9F]/6 ring-1 ring-inset ring-[#416B9F]/20' : '',
                     ].join(' ')}
-                    style={{ height: ROW_H }}
+                    style={{ height: rowHeight }}
                     onClickCapture={(e) => {
                             const t = e.target as HTMLElement | null;
                             if (t?.closest('[data-reservation-pill]')) return;
@@ -299,11 +302,13 @@ export function DayPlanning(props: Readonly<{
                               >
                                 <ReservationPill
                                   reservation={r}
-                                  label={segmentLabel(r, 'day')}
+                                  label={ownerMinimal ? ownerSegmentLabel(r, 'day') : segmentLabel(r, 'day')}
                                   height={barH}
                                   draggable={!ro && !isReservationLockedFromReservation(r)}
+                                  minimal={ownerMinimal}
+                                  neutralStyle={ownerMinimal}
                                   onClick={onOpenReservation ? () => onOpenReservation(r.id) : undefined}
-                                  className="pointer-events-auto flex h-full w-full min-w-0 items-center rounded-lg px-2 text-left text-[11px] font-semibold text-white shadow-sm"
+                                  className="pointer-events-auto flex h-full w-full min-w-0 rounded-lg px-2 text-left text-[11px] font-semibold text-white shadow-sm"
                                 />
                               </div>
                             );

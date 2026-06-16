@@ -1,15 +1,15 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { CouponDiscountKind } from '@prisma/client';
+import { CouponDiscountKind, type Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { couponRequiresAirbusBadge } from './airbus-coupon.util';
 import {
-  clientKeyFromReservation,
-  computeBrutCentsBeforeCoupon,
-  effectiveDiscountPercentFromCents,
-  isDegradedDiscountApplied,
-  priorSeasonReservationsCount,
-  seasonYearForAprilSeptember,
-} from './coupon-usage.util';
+  computeReservationPricingCents,
+  countsTowardCouponTier,
+  resolveEffectiveCouponFromReservations,
+  type CouponCountableReservation,
+} from '@bleu-calanque/shared';
+import { mapReservationExtrasForPricing } from '../pricing/reservation-pricing-map';
+import { clientKeyFromReservation, computeBrutCentsBeforeCoupon } from './coupon-usage.util';
 
 function csvEscape(v: string | number): string {
   const s = String(v ?? '');
@@ -23,6 +23,25 @@ function formatEuros(cents: number): string {
 
 function formatDateFr(d: Date): string {
   return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+type ExportReservation = Prisma.ReservationGetPayload<{
+  include: { extras: { include: { extra: true } } };
+}>;
+
+function toCouponCountable(r: ExportReservation): CouponCountableReservation {
+  return {
+    id: r.id,
+    createdAt: r.createdAt,
+    couponCode: r.couponCode,
+    clientMemberId: r.clientMemberId,
+    clientEmail: r.clientEmail,
+    startAt: r.startAt,
+    endAt: r.endAt,
+    status: r.status,
+    cancelledAt: r.cancelledAt,
+    paymentCapturedAt: r.paymentCapturedAt,
+  };
 }
 
 @Injectable()
@@ -45,7 +64,10 @@ export class CouponsAirbusExportService {
       orderBy: { startAt: 'asc' },
     });
 
-    const memberIds = [...new Set(reservations.map((r) => r.clientMemberId).filter(Boolean))] as string[];
+    const eligible = reservations.filter((r) => countsTowardCouponTier(r));
+    const countables = eligible.map(toCouponCountable);
+
+    const memberIds = [...new Set(eligible.map((r) => r.clientMemberId).filter(Boolean))] as string[];
     const members =
       memberIds.length > 0
         ? await this.prisma.member.findMany({
@@ -58,26 +80,57 @@ export class CouponsAirbusExportService {
     type ClientAgg = { locationCount: number; degradedCount: number };
     const clientAgg = new Map<string, ClientAgg>();
 
-    const rowMeta: {
+    type ExportRow = {
+      reservation: ExportReservation;
       clientKey: string;
-      effectivePct: number | null;
+      brutCents: number;
+      ttcCents: number;
+      tierPercent: number | null;
       isDegraded: boolean;
-    }[] = [];
+    };
 
-    for (const r of reservations) {
+    const exportRows: ExportRow[] = eligible.map((r) => {
       const clientKey = clientKeyFromReservation(r);
-      const brutCents = computeBrutCentsBeforeCoupon(r);
-      const ttcCents = r.totalDueCents ?? brutCents;
-      const effectivePct = effectiveDiscountPercentFromCents(brutCents, ttcCents);
-      const isDegraded = isDegradedDiscountApplied(effectivePct, coupon);
-
-      rowMeta.push({ clientKey, effectivePct, isDegraded });
+      const eff = resolveEffectiveCouponFromReservations(
+        {
+          discountKind: coupon.discountKind,
+          discountValue: coupon.discountValue,
+          seasonMaxFullUsesPerClient: coupon.seasonMaxFullUsesPerClient,
+          seasonDegradedDiscountValue: coupon.seasonDegradedDiscountValue,
+        },
+        r,
+        r.startAt,
+        coupon.code,
+        countables,
+        { reservationId: r.id, evaluationCreatedAt: r.createdAt },
+      );
+      const isDegraded = eff.tier === 'degraded';
+      const extras = mapReservationExtrasForPricing(r.extras);
+      const pricing = computeReservationPricingCents({
+        rentalPriceCents: r.rentalPriceCents ?? 0,
+        discountPercent: r.discountPercent,
+        extras,
+        startAt: r.startAt,
+        endAt: r.endAt,
+        coupon:
+          coupon.discountKind === CouponDiscountKind.PERCENT ||
+          coupon.discountKind === CouponDiscountKind.FIXED
+            ? { discountKind: eff.discountKind, discountValue: eff.discountValue }
+            : null,
+      });
+      const brutCents = computeBrutCentsBeforeCoupon({ ...r, extras });
+      const ttcCents = pricing.grandTotalCents;
 
       const agg = clientAgg.get(clientKey) ?? { locationCount: 0, degradedCount: 0 };
       agg.locationCount += 1;
       if (isDegraded) agg.degradedCount += 1;
       clientAgg.set(clientKey, agg);
-    }
+
+      const tierPercent =
+        coupon.discountKind === CouponDiscountKind.PERCENT ? eff.discountValue : null;
+
+      return { reservation: r, clientKey, brutCents, ttcCents, tierPercent, isDegraded };
+    });
 
     const headers = [
       'Date réservation',
@@ -94,24 +147,16 @@ export class CouponsAirbusExportService {
       'Nb fois remise à 20% (client)',
     ];
 
-    const csvBody = reservations
-      .map((r, idx) => {
-        const meta = rowMeta[idx]!;
-        const agg = clientAgg.get(meta.clientKey)!;
-        const brutCents = computeBrutCentsBeforeCoupon(r);
-        const ttcCents = r.totalDueCents ?? brutCents;
+    const csvBody = exportRows
+      .map(({ reservation: r, clientKey, brutCents, ttcCents, tierPercent, isDegraded }) => {
+        const agg = clientAgg.get(clientKey) ?? { locationCount: 0, degradedCount: 0 };
         const degradedLabel =
-          meta.isDegraded && coupon.discountKind === CouponDiscountKind.PERCENT
-            ? `Oui (${coupon.seasonDegradedDiscountValue ?? meta.effectivePct} %)`
-            : meta.isDegraded
+          isDegraded && coupon.discountKind === CouponDiscountKind.PERCENT
+            ? `Oui (${coupon.seasonDegradedDiscountValue ?? tierPercent} %)`
+            : isDegraded
               ? 'Oui'
               : 'Non';
-        const effPct =
-          meta.effectivePct != null
-            ? String(meta.effectivePct)
-            : coupon.discountKind === CouponDiscountKind.PERCENT
-              ? String(coupon.discountValue)
-              : '—';
+        const effPct = tierPercent != null ? String(tierPercent) : '—';
         const badge =
           r.airbusBadge?.trim() ||
           (r.clientMemberId ? badgeByMember.get(r.clientMemberId) ?? '' : '');

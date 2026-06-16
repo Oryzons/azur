@@ -2,6 +2,7 @@ import { config } from 'dotenv';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { DEFAULT_BRAND_NAME } from '@bleu-calanque/shared';
 import { Prisma, PrismaClient, UserRole } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
@@ -91,11 +92,19 @@ async function main() {
   // Singleton settings (valeurs minimales)
   await prisma.companySettings.upsert({
     where: { id: 'company_settings' },
-    update: {},
+    update: {
+      legalName: DEFAULT_BRAND_NAME,
+      tradeName: DEFAULT_BRAND_NAME,
+      brandName: DEFAULT_BRAND_NAME,
+      addressLine: 'Port Ouest Marseille, D568',
+      postalCode: '13016',
+      city: 'Marseille',
+      country: 'France',
+    },
     create: {
       id: 'company_settings',
-      legalName: 'Bleu Calanque',
-      tradeName: 'Bleu Calanque',
+      legalName: DEFAULT_BRAND_NAME,
+      tradeName: DEFAULT_BRAND_NAME,
       professionalPhone: '',
       domiciliation: '',
       companyType: '',
@@ -104,19 +113,20 @@ async function main() {
       rcsRegistration: '',
       nafCode: '',
       shareCapital: '',
-      addressLine: '',
-      city: '',
-      postalCode: '',
+      addressLine: 'Port Ouest Marseille, D568',
+      city: 'Marseille',
+      postalCode: '13016',
       country: 'France',
       contactEmail: '',
       contactPhone: '',
       publicSiteUrl: '',
-      brandName: 'Bleu Calanque',
+      brandName: DEFAULT_BRAND_NAME,
       adsVatRatePercent: 20,
       vatBasePercent: 100,
       vatPercent: 20,
       departureLocation: 'Port Ouest Marseille — L\'Estaque',
       arrivalLocation: 'Port Ouest Marseille — L\'Estaque',
+      contactOpeningHours: 'Lundi – vendredi : 9h – 18h\nSamedi : 9h – 12h',
     },
   });
 
@@ -167,21 +177,27 @@ async function main() {
   await prisma.emailSettings.upsert({
     where: { id: 'email_settings' },
     update: {},
-    create: { id: 'email_settings', fromName: 'Bleu Calanque', fromEmail: '', replyToEmail: '', confirmationsEnabled: true },
+    create: { id: 'email_settings', fromName: DEFAULT_BRAND_NAME, fromEmail: '', replyToEmail: '', confirmationsEnabled: true },
   });
 
   await prisma.publicSiteSettings.upsert({
     where: { id: 'public_site_settings' },
-    update: {},
+    update: {
+      brandName: DEFAULT_BRAND_NAME,
+      addressLine: 'Port Ouest Marseille, D568',
+      postalCode: '13016',
+      city: 'Marseille',
+      country: 'France',
+    },
     create: {
       id: 'public_site_settings',
       publicSiteUrl: '',
-      brandName: 'Bleu Calanque',
+      brandName: DEFAULT_BRAND_NAME,
       contactEmail: '',
       contactPhone: '',
-      addressLine: '',
-      city: '',
-      postalCode: '',
+      addressLine: 'Port Ouest Marseille, D568',
+      city: 'Marseille',
+      postalCode: '13016',
       country: 'France',
       departureLocation: 'Port Ouest Marseille — L\'Estaque',
       arrivalLocation: 'Port Ouest Marseille — L\'Estaque',

@@ -86,6 +86,7 @@ export class MembersService {
         permManageMembers: Boolean(input.permManageMembers ?? false),
         permManageBoats: Boolean(input.permManageBoats ?? false),
         permManageReservations: Boolean(input.permManageReservations ?? false),
+        permComptabilite: Boolean(input.permComptabilite ?? false),
       },
     });
     await this.audit.logCreate(AuditEntity.MEMBER, member.id, {
@@ -139,6 +140,7 @@ export class MembersService {
         permManageMembers: Boolean(input.permManageMembers ?? false),
         permManageBoats: Boolean(input.permManageBoats ?? false),
         permManageReservations: Boolean(input.permManageReservations ?? false),
+        permComptabilite: Boolean(input.permComptabilite ?? false),
       },
     });
     await this.audit.logUpdate(

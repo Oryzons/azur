@@ -18,7 +18,7 @@ export function PaymentCancelPage() {
         ) : null}
         <p className="mt-8">
           <Link to="/login" className="text-sm font-semibold text-[#7eb3e8] hover:underline">
-            Retour à l’espace Bleu Calanque
+            Retour à l’accueil
           </Link>
         </p>
       </div>

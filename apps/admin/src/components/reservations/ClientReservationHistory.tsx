@@ -90,9 +90,9 @@ export function ClientReservationHistory(props: Readonly<{
               </span>
               {status !== 'reserved_paid' || !r.details?.paymentCapturedAt ? (
                 <span
-                  className={`mt-1 inline-block rounded-md px-1.5 py-0.5 text-[11px] font-semibold ${statusBadgeClass(status, r.details)}`}
+                  className={`mt-1 inline-block rounded-md px-1.5 py-0.5 text-[11px] font-semibold ${statusBadgeClass(status, r.details, { installmentPlan: r.installmentPlan })}`}
                 >
-                  {statusDisplayLabel(status, r.details)}
+                  {statusDisplayLabel(status, r.details, { installmentPlan: r.installmentPlan })}
                 </span>
               ) : null}
             </>

@@ -30,7 +30,6 @@ export function DashboardRevenueSummary() {
   const refreshExtras = useExtrasStore((s) => s.refresh);
 
   const couponsCatalog = useCouponsStore((s) => s.coupons);
-  const couponRedemptions = useCouponsStore((s) => s.redemptions);
   const couponsHydrated = useCouponsStore((s) => s.hydrated);
   const refreshCoupons = useCouponsStore((s) => s.refresh);
 
@@ -55,11 +54,11 @@ export function DashboardRevenueSummary() {
 
   const sums = useMemo(
     () => ({
-      day: sumTotals(reservations, { start: dayStart, endExclusive: dayEnd }, extrasCatalog, couponsCatalog, couponRedemptions),
-      week: sumTotals(reservations, { start: weekStart, endExclusive: weekEnd }, extrasCatalog, couponsCatalog, couponRedemptions),
-      month: sumTotals(reservations, { start: monthStart, endExclusive: monthEnd }, extrasCatalog, couponsCatalog, couponRedemptions),
+      day: sumTotals(reservations, { start: dayStart, endExclusive: dayEnd }, extrasCatalog, couponsCatalog),
+      week: sumTotals(reservations, { start: weekStart, endExclusive: weekEnd }, extrasCatalog, couponsCatalog),
+      month: sumTotals(reservations, { start: monthStart, endExclusive: monthEnd }, extrasCatalog, couponsCatalog),
     }),
-    [couponRedemptions, couponsCatalog, dayEnd, dayStart, extrasCatalog, monthEnd, monthStart, reservations, weekEnd, weekStart],
+    [couponsCatalog, dayEnd, dayStart, extrasCatalog, monthEnd, monthStart, reservations, weekEnd, weekStart],
   );
 
   const selected = sums[range];

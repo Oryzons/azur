@@ -2,6 +2,7 @@
  * Remplit le(s) contrat(s) actif(s) avec le texte standard (CGV, annulation, justificatifs).
  * Usage: npx tsx scripts/apply-default-contract-template.ts [contractId]
  */
+import { DEFAULT_BRAND_NAME } from '@bleu-calanque/shared';
 import { PrismaClient } from '@prisma/client';
 import { serializeDefaultTermsForTemplate } from '../src/rental-contracts/rental-contract-default-terms';
 
@@ -14,7 +15,7 @@ async function applyToContract(id: string) {
     return;
   }
   const company = await prisma.companySettings.findUnique({ where: { id: 'company_settings' } });
-  const brand = company?.brandName ?? 'Bleu Calanque';
+  const brand = company?.brandName ?? DEFAULT_BRAND_NAME;
   const defaults = serializeDefaultTermsForTemplate(brand);
 
   let requiredDocuments = existing.requiredDocuments;
@@ -30,7 +31,7 @@ async function applyToContract(id: string) {
   const updated = await prisma.contract.update({
     where: { id },
     data: {
-      name: existing.name === 'Nouveau contrat' ? 'Contrat location Bleu Calanque' : existing.name,
+      name: existing.name === 'Nouveau contrat' ? `Contrat location ${DEFAULT_BRAND_NAME}` : existing.name,
       title: existing.title?.trim() ? existing.title : 'Contrat de location',
       description: defaults.description,
       cancellationTerms: defaults.cancellationTerms,

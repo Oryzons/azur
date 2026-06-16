@@ -1,6 +1,8 @@
 import type { Reservation } from '@/pages/calendar/reservationTypes';
 import { computeReservationPricingBreakdown } from '@/pages/finances/pricingTotals';
-import type { Coupon, CouponRedemption } from '@/stores/coupons';
+import { isReservationFullyPaid, resolveReservationStatus } from '@/lib/reservationStatus';
+import { resolveStoreCreditAppliedCents } from '@bleu-calanque/shared';
+import type { Coupon } from '@/stores/coupons';
 import type { Extra } from '@/stores/extras';
 
 export type ReservationPricingDisplay = {
@@ -13,13 +15,17 @@ export type ReservationPricingDisplay = {
   couponDiscountEuros: number | null;
   /** Total en base ≠ total recalculé (réservation non payée). */
   storedTotalMismatch: boolean;
+  /** Montant TTC encore enregistré en base (si différent du recalcul). */
+  storedTotalTtcEuros: number | null;
+  /** Avoir client imputé sur la part en ligne (€). */
+  storeCreditAppliedEuros: number | null;
 };
 
 export function computeReservationPricingDisplay(
   reservation: Reservation,
   extrasCatalog: readonly Extra[],
   coupons: readonly Coupon[],
-  redemptions: readonly CouponRedemption[],
+  allReservations: readonly Reservation[],
 ): ReservationPricingDisplay {
   const d = reservation.details;
   if (!d) {
@@ -33,13 +39,19 @@ export function computeReservationPricingDisplay(
     reservation.totalDueCents != null && reservation.totalDueCents > 0
       ? Math.round(reservation.totalDueCents) / 100
       : null;
-  const isPaid = Boolean(d.paymentCapturedAt);
+  const status = resolveReservationStatus(d);
+  const isFullyPaid =
+    isReservationFullyPaid({ installmentPlan: reservation.installmentPlan }, d) ||
+    status === 'refunded' ||
+    status === 'partially_refunded';
+  const hasAnyPayment =
+    Boolean(d.paymentCapturedAt) || status === 'reserved_paid' || isFullyPaid;
 
   const breakdown = computeReservationPricingBreakdown(
     reservation,
     [...extrasCatalog],
     [...coupons],
-    [...redemptions],
+    allReservations,
   );
 
   if (!breakdown.ok) {
@@ -52,13 +64,19 @@ export function computeReservationPricingDisplay(
       totalTtcEuros: storedTtc,
       couponDiscountEuros: null,
       storedTotalMismatch: false,
+      storedTotalTtcEuros: storedTtc,
+      storeCreditAppliedEuros: null,
     };
   }
 
   const computedFinal = breakdown.final;
-  const totalTtcEuros = isPaid && storedTtc != null ? storedTtc : computedFinal;
+  const computedPayableOnline = breakdown.payableOnline;
+  const totalTtcEuros = hasAnyPayment && storedTtc != null ? storedTtc + breakdown.extrasOffline : computedFinal;
+  // Le total en base peut être inférieur au recalcul (avoir client déduit) : ne pas alerter dans ce cas.
   const storedTotalMismatch =
-    !isPaid && storedTtc != null && Math.abs(storedTtc - computedFinal) > 0.01;
+    !hasAnyPayment &&
+    storedTtc != null &&
+    storedTtc > computedPayableOnline + 0.01;
 
   let couponLabel: string | null = null;
   let couponApplies = false;
@@ -66,15 +84,29 @@ export function computeReservationPricingDisplay(
 
   if (breakdown.coupon?.applied) {
     couponApplies = true;
+    const tierNote = breakdown.coupon.tier === 'degraded' ? ' (palier réduit)' : '';
     if (breakdown.coupon.kind === 'percent') {
-      couponLabel = `Coupon −${breakdown.coupon.effectiveValue} %`;
+      couponLabel = `Coupon −${breakdown.coupon.effectiveValue} %${tierNote}`;
     } else {
-      couponLabel = `Coupon −${breakdown.coupon.effectiveValue.toFixed(2)} €`;
+      couponLabel = `Coupon −${breakdown.coupon.effectiveValue.toFixed(2)} €${tierNote}`;
     }
-    couponDiscountEuros = Math.max(0, Math.round((breakdown.afterManual - computedFinal) * 100) / 100);
+    couponDiscountEuros = breakdown.couponDiscountOnRental;
   } else if (breakdown.coupon && !breakdown.coupon.applied) {
     couponLabel = 'Coupon non appliqué';
   }
+
+  const payableOnlineCents = Math.round(computedPayableOnline * 100);
+  const storedDueCents =
+    reservation.totalDueCents != null && reservation.totalDueCents >= 0
+      ? reservation.totalDueCents
+      : null;
+  const storeCreditAppliedCents = resolveStoreCreditAppliedCents(
+    payableOnlineCents,
+    storedDueCents,
+    null,
+  );
+  const storeCreditAppliedEuros =
+    storeCreditAppliedCents > 0 ? Math.round(storeCreditAppliedCents) / 100 : null;
 
   return {
     rentalBrutEuros: breakdown.rental,
@@ -85,6 +117,8 @@ export function computeReservationPricingDisplay(
     totalTtcEuros,
     couponDiscountEuros,
     storedTotalMismatch,
+    storedTotalTtcEuros: storedTtc,
+    storeCreditAppliedEuros,
   };
 }
 
@@ -98,5 +132,7 @@ function emptyPricingDisplay(): ReservationPricingDisplay {
     totalTtcEuros: null,
     couponDiscountEuros: null,
     storedTotalMismatch: false,
+    storedTotalTtcEuros: null,
+    storeCreditAppliedEuros: null,
   };
 }

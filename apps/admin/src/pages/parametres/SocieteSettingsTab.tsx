@@ -8,6 +8,7 @@ import {
   MapPin,
   Percent,
   Phone,
+  Clock,
   Store,
 } from 'lucide-react';
 import { DEFAULT_RENTAL_ARRIVAL_LOCATION, DEFAULT_RENTAL_DEPARTURE_LOCATION } from '@bleu-calanque/shared';
@@ -295,6 +296,22 @@ export function SocieteSettingsTab() {
                     placeholder="https://…"
                   />
                 </div>
+              </label>
+              <label className="block sm:col-span-2">
+                <FieldLabel>Horaires d’ouverture (propriétaires)</FieldLabel>
+                <div className="relative">
+                  <Clock className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-zinc-400" />
+                  <textarea
+                    value={company.contactOpeningHours}
+                    onChange={(e) => patch({ contactOpeningHours: e.target.value })}
+                    rows={4}
+                    className={`${inputCls()} resize-y pl-9`}
+                    placeholder={'Lundi – vendredi : 9h – 18h\nSamedi : 9h – 12h'}
+                  />
+                </div>
+                <p className="mt-1.5 text-[11px] text-zinc-500">
+                  Affiché sur la page <strong>Contact</strong> du menu propriétaire. Une ligne par plage horaire.
+                </p>
               </label>
             </div>
           ) : null}

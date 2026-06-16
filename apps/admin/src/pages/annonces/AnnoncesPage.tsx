@@ -5,10 +5,12 @@ import { usePresence } from '@/lib/presence';
 import {
   DEFAULT_NAVAL_BASE,
   useAnnouncementsStore,
+  type Announcement,
   type AnnouncementLink,
 } from '@/stores/announcements';
 import { BOAT_TYPES_UI, useBoatsStore, type Boat, type BoatType, type Fleet } from '@/stores/boats';
 import { usePageFiltersPanel, type PageFiltersConfig } from '@/contexts/PageFiltersContext';
+import { usePersistedString } from '@/lib/pageFilterStorage';
 import { ContentReveal } from '@/components/ui/ContentReveal';
 import { ThreeStepGuide } from '@/components/ui/ThreeStepGuide';
 import { AnnoncesPageSkeleton } from '@/components/skeletons/AnnoncesPageSkeleton';
@@ -57,6 +59,7 @@ export function AnnoncesPage() {
   const hydrated = useAnnouncementsStore((s) => s.hydrated);
   const refresh = useAnnouncementsStore((s) => s.refresh);
   const addAnnouncement = useAnnouncementsStore((s) => s.addAnnouncement);
+  const updateAnnouncement = useAnnouncementsStore((s) => s.updateAnnouncement);
   const removeAnnouncement = useAnnouncementsStore((s) => s.removeAnnouncement);
 
   useEffect(() => {
@@ -69,10 +72,11 @@ export function AnnoncesPage() {
   const active = useMemo(() => announcements.filter((a) => a.status === 'active'), [announcements]);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
-  const [fleetFilter, setFleetFilter] = useState<string>('all');
+  const [search, setSearch] = usePersistedString('annonces.search');
+  const [fleetFilter, setFleetFilter] = usePersistedString('annonces.fleetFilter', 'all');
 
   const [panelOpen, setPanelOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const presence = usePresence(panelOpen, 180);
 
   const [title, setTitle] = useState('');
@@ -173,6 +177,7 @@ export function AnnoncesPage() {
   );
 
   function resetForm() {
+    setEditingId(null);
     setTitle('');
     setNavalBase(DEFAULT_NAVAL_BASE);
     setLinkMode('existing_boat');
@@ -191,6 +196,33 @@ export function AnnoncesPage() {
     setError('');
   }
 
+  function fillFormFromAnnouncement(a: Announcement) {
+    setEditingId(a.id);
+    setTitle(a.title);
+    setNavalBase(a.navalBase);
+    setPresentationPhotos(a.presentationPhotos ?? []);
+    setPhotoError('');
+    setError('');
+    const link = a.link;
+    setLinkMode(link.kind);
+    if (link.kind === 'existing_fleet') {
+      setTargetFleetId(link.fleetId);
+    } else if (link.kind === 'existing_boat') {
+      setTargetBoatId(link.boatId);
+      const boat = boats.find((b) => b.id === link.boatId);
+      setBoatFleetFilter(boat?.fleetId ?? '');
+    } else if (link.kind === 'new_fleet') {
+      setNewFleetName(link.fleetName);
+    } else if (link.kind === 'new_boat') {
+      setNewBoatBrand(link.brand);
+      setNewBoatName(link.name);
+      setNewBoatModel(link.model);
+      setNewBoatType(link.boatType);
+      setNewBoatMax(String(link.maxPassengers));
+      setNewBoatFleetId(link.fleetId ?? '');
+    }
+  }
+
   function openPanel() {
     resetForm();
     setTargetFleetId(fleets[0]?.id ?? '');
@@ -198,8 +230,14 @@ export function AnnoncesPage() {
     setPanelOpen(true);
   }
 
+  function openEditPanel(a: Announcement) {
+    fillFormFromAnnouncement(a);
+    setPanelOpen(true);
+  }
+
   function closePanel() {
     setPanelOpen(false);
+    setEditingId(null);
   }
 
   function buildLink(): AnnouncementLink | null {
@@ -232,13 +270,16 @@ export function AnnoncesPage() {
       return;
     }
     void (async () => {
-      const res = await addAnnouncement({
+      const payload = {
         title,
         navalBase,
-        status: 'active',
+        status: 'active' as const,
         link,
         presentationPhotos,
-      });
+      };
+      const res = editingId
+        ? await updateAnnouncement(editingId, payload)
+        : await addAnnouncement(payload);
       if (!res.ok) {
         setError(res.error);
         return;
@@ -410,6 +451,7 @@ export function AnnoncesPage() {
                 fleets={fleets}
                 boats={boats}
                 publicUrl={publicUrl}
+                onEdit={() => openEditPanel(selected)}
                 onDelete={() => {
                   const ok = globalThis.confirm(`Supprimer l’annonce « ${selected.title} » ?`);
                   if (!ok) return;
@@ -424,6 +466,7 @@ export function AnnoncesPage() {
         <AnnouncementCreatePanel
           presence={presence}
           onClose={closePanel}
+          mode={editingId ? 'edit' : 'create'}
           title={title}
           setTitle={setTitle}
           navalBase={navalBase}
@@ -469,6 +512,7 @@ function AnnouncementCreatePanel(
   props: Readonly<{
     presence: { present: boolean; phase: 'enter' | 'exit' };
     onClose: () => void;
+    mode: 'create' | 'edit';
     title: string;
     setTitle: (v: string) => void;
     navalBase: string;
@@ -506,8 +550,15 @@ function AnnouncementCreatePanel(
     submit: () => void;
   }>,
 ) {
-  const { presence, onClose } = props;
+  const { presence, onClose, mode } = props;
   if (!presence.present) return null;
+
+  const panelTitle = mode === 'edit' ? 'Modifier l’annonce' : 'Nouvelle annonce';
+  const panelSubtitle =
+    mode === 'edit'
+      ? 'Mettez à jour le titre, les photos ou le rattachement à l’offre.'
+      : 'Titre, base nautique, photos et rattachement à l’offre.';
+  const submitLabel = mode === 'edit' ? 'Enregistrer' : 'Publier';
 
   return (
     <Portal>
@@ -528,8 +579,8 @@ function AnnouncementCreatePanel(
         >
           <div className="flex shrink-0 items-center justify-between gap-4 border-b border-zinc-200/80 bg-white/90 px-6 py-5 backdrop-blur">
             <div>
-              <p className="text-lg font-bold tracking-tight text-zinc-900">Nouvelle annonce</p>
-              <p className="mt-1 text-sm text-zinc-500">Titre, base nautique, photos et rattachement à l&apos;offre.</p>
+              <p className="text-lg font-bold tracking-tight text-zinc-900">{panelTitle}</p>
+              <p className="mt-1 text-sm text-zinc-500">{panelSubtitle}</p>
             </div>
             <button
               type="button"
@@ -736,7 +787,7 @@ function AnnouncementCreatePanel(
                 onClick={props.submit}
                 className="rounded-2xl bg-[#416B9F] px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-[#365b87]"
               >
-                Publier
+                {submitLabel}
               </button>
             </div>
           </div>

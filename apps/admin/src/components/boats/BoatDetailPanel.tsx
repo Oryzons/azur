@@ -97,7 +97,7 @@ export function BoatDetailPanel(
         ) : (
           <p className="text-xs text-zinc-500">
             Aucune information complémentaire — utilisez <span className="font-semibold">Modifier</span> puis
-            « Voir plus » pour les dimensions, équipements et assurance.
+            « Voir plus » pour les dimensions, équipements et documents de légalité.
           </p>
         )}
 

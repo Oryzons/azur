@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { subscribeAdminBroadcast } from '@/lib/adminBroadcast';
 import { useNotificationsStore } from '@/stores/notifications';
 import { useReservationsStore } from '@/stores/reservations';
+import { useUnavailabilitiesStore } from '@/stores/unavailabilities';
 
 const POLL_MS = 6_000;
 
@@ -18,6 +19,9 @@ export function InternalNotificationsPoller() {
     const unsubBroadcast = subscribeAdminBroadcast((msg) => {
       if (msg.type === 'payment-captured' || msg.type === 'reservations-changed') {
         void useReservationsStore.getState().refresh();
+        runPoll();
+      } else if (msg.type === 'unavailabilities-changed') {
+        void useUnavailabilitiesStore.getState().refresh();
         runPoll();
       } else if (msg.type === 'poll-notifications') {
         runPoll();
