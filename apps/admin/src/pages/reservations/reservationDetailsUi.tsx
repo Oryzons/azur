@@ -82,8 +82,9 @@ export function StatusBanner(props: Readonly<{
   icon: LucideIcon;
   title: string;
   detail?: string;
+  trailingIcon?: LucideIcon;
 }>) {
-  const { tone, icon: Icon, title, detail } = props;
+  const { tone, icon: Icon, title, detail, trailingIcon: TrailingIcon } = props;
   const toneClass =
     tone === 'success'
       ? 'border-emerald-200/90 bg-emerald-50 text-emerald-900'
@@ -103,12 +104,15 @@ export function StatusBanner(props: Readonly<{
           : 'text-zinc-500';
 
   return (
-    <div className={`flex gap-2.5 rounded-xl border px-3 py-2.5 ${toneClass}`}>
+    <div className={`flex items-start gap-2.5 rounded-xl border px-3 py-2.5 ${toneClass}`}>
       <Icon className={`h-4 w-4 shrink-0 ${iconClass}`} strokeWidth={2} aria-hidden />
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <p className="text-sm font-semibold">{title}</p>
         {detail ? <p className="mt-0.5 text-xs leading-relaxed opacity-90">{detail}</p> : null}
       </div>
+      {TrailingIcon ? (
+        <TrailingIcon className={`h-4 w-4 shrink-0 ${iconClass}`} strokeWidth={2.5} aria-hidden />
+      ) : null}
     </div>
   );
 }

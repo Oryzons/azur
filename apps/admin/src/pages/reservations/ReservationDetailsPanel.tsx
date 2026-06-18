@@ -98,6 +98,12 @@ function fmtBirthDisplay(raw: string | undefined | null): string {
   return s;
 }
 
+function fmtEurosFromCents(cents: number | null | undefined): string {
+  if (cents == null) return '—';
+  const euros = cents / 100;
+  return euros.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+}
+
 function sameCalendarDay(a: Date, b: Date) {
   return (
     a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
@@ -392,6 +398,7 @@ function PricingBlockPresent(
       <StatusBanner
         tone="danger"
         icon={ShieldAlert}
+        trailingIcon={X}
         title="Empreinte caution non retenue"
         detail="Paiement reçu mais blocage caution absent (fréquent avec Apple Pay). Utilisez « Sync. Stripe » ou une carte classique."
       />
@@ -478,6 +485,76 @@ function PricingBlockPresent(
             <p className="mt-0.5 text-sm font-bold text-zinc-900">{deposit}</p>
           </div>
         </div>
+
+        {(() => {
+          const totalCents =
+            pricing.totalTtcEuros != null
+              ? Math.round(pricing.totalTtcEuros * 100)
+              : props.reservation.totalDueCents != null
+                ? props.reservation.totalDueCents
+                : null;
+
+          const offlineDueCents = Math.max(0, paymentCtx.offlineDueCents ?? 0);
+          const onlineTotalCents = totalCents != null ? Math.max(0, totalCents - offlineDueCents) : null;
+
+          const plan = props.reservation.installmentPlan ?? [];
+          const paidFromPlanCents =
+            plan.length > 0
+              ? plan.reduce((sum, p) => sum + (p.status === 'PAID' ? (p.amountCents ?? 0) : 0), 0)
+              : null;
+          const paidOnlineCents =
+            paidFromPlanCents != null
+              ? paidFromPlanCents
+              : props.reservation.totalDueCents != null
+                ? props.reservation.totalDueCents
+                : d.paymentCapturedAt && onlineTotalCents != null
+                  ? onlineTotalCents
+                  : null;
+
+          if (totalCents == null && paidOnlineCents == null && offlineDueCents === 0) return null;
+
+          const onlineRemainingCents =
+            onlineTotalCents != null && paidOnlineCents != null
+              ? Math.max(0, onlineTotalCents - paidOnlineCents)
+              : onlineTotalCents != null
+                ? onlineTotalCents
+                : null;
+          const remainingCents =
+            onlineRemainingCents != null ? onlineRemainingCents + offlineDueCents : offlineDueCents > 0 ? offlineDueCents : null;
+          const showRemaining = remainingCents != null && remainingCents > 0;
+          return (
+            <div className="grid grid-cols-2 gap-2">
+              <div className="rounded-xl border border-emerald-200/70 bg-emerald-50/60 px-3 py-2">
+                <p className="text-[10px] font-semibold uppercase text-emerald-800">Payé</p>
+                <p className="mt-0.5 text-sm font-bold text-zinc-900">{fmtEurosFromCents(paidOnlineCents)}</p>
+                {offlineDueCents > 0 ? (
+                  <p className="mt-0.5 text-[10px] font-medium text-emerald-800/80">En ligne uniquement</p>
+                ) : null}
+              </div>
+              <div
+                className={[
+                  'rounded-xl border px-3 py-2',
+                  showRemaining ? 'border-amber-200/70 bg-amber-50/60' : 'border-zinc-200/70 bg-zinc-50/60',
+                ].join(' ')}
+              >
+                <p
+                  className={[
+                    'text-[10px] font-semibold uppercase',
+                    showRemaining ? 'text-amber-800' : 'text-zinc-500',
+                  ].join(' ')}
+                >
+                  Reste à payer
+                </p>
+                <p className="mt-0.5 text-sm font-bold text-zinc-900">{fmtEurosFromCents(remainingCents)}</p>
+                {offlineDueCents > 0 ? (
+                  <p className="mt-0.5 text-[10px] font-medium text-amber-800/80">
+                    Dont {fmtEurosFromCents(offlineDueCents)} à régler sur place
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          );
+        })()}
 
         <InfoRow icon={Banknote} label="Canal" value={payment} />
         <InfoRow icon={Tag} label="Coupon" value={coupon} />

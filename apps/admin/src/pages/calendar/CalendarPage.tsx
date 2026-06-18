@@ -989,7 +989,31 @@ function SpanPlanning(props: Readonly<{
                 (s) => s.startIdx,
                 (s) => s.endIdx + 1,
               );
-              const { barH, rowHeight } = planningRowMetrics(laneInfo.lanes);
+              // Hauteur "normale" basée sur 1 seul couloir.
+              // On compactera uniquement les segments mono-jour quand ils sont plusieurs sur la même date.
+              const { barH: baseBarH, rowHeight } = planningRowMetrics(1);
+
+              const daySingleLaneInfo = new Map<number, { count: number; laneBySegIndex: Map<number, number> }>();
+              for (let dayIdx = 0; dayIdx < days.length; dayIdx++) {
+                const singles: { segIndex: number; lane: number }[] = [];
+                for (let i = 0; i < rowSegs.length; i++) {
+                  const seg = rowSegs[i];
+                  if (!seg) continue;
+                  if (seg.startIdx !== dayIdx || seg.endIdx !== dayIdx) continue; // mono-jour
+                  singles.push({ segIndex: i, lane: laneInfo.laneByIndex[i] ?? 0 });
+                }
+                if (singles.length <= 1) continue;
+
+                const uniqueLanes = [...new Set(singles.map((s) => s.lane))].sort((a, b) => a - b);
+                const laneRemap = new Map<number, number>();
+                uniqueLanes.forEach((l, idx) => laneRemap.set(l, idx));
+
+                const laneBySegIndex = new Map<number, number>();
+                for (const s of singles) {
+                  laneBySegIndex.set(s.segIndex, laneRemap.get(s.lane) ?? 0);
+                }
+                daySingleLaneInfo.set(dayIdx, { count: uniqueLanes.length, laneBySegIndex });
+              }
 
               return (
                 <div key={boat.id} className="group flex transition-colors hover:bg-zinc-50/50">
@@ -1123,22 +1147,40 @@ function SpanPlanning(props: Readonly<{
                         {rowSegs.map((seg, i) => {
                           const isMultiDay = seg.endIdx > seg.startIdx;
                           const daySpan = seg.endIdx - seg.startIdx + 1;
-                          const lane = laneInfo.laneByIndex[i] ?? 0;
-                          const top = overlayPad + lane * (barH + PILL_LANE_GAP);
+                          const singleDay = !isMultiDay;
+                          const compactMeta = singleDay ? daySingleLaneInfo.get(seg.startIdx) : undefined;
+                          const compactCount = compactMeta?.count ?? 1;
+                          const compactLane = compactMeta?.laneBySegIndex.get(i);
+                          const compactBarH =
+                            compactCount > 1
+                              ? Math.max(
+                                  14,
+                                  Math.floor(
+                                    (rowHeight - overlayPad * 2 - (compactCount - 1) * PILL_LANE_GAP) /
+                                      compactCount,
+                                  ),
+                                )
+                              : baseBarH;
+                          const lane = compactLane ?? (laneInfo.laneByIndex[i] ?? 0);
+                          const top = overlayPad + lane * (compactBarH + PILL_LANE_GAP);
                           const rounded = isMultiDay ? 'rounded-xl px-2' : 'rounded-lg px-1.5';
-                          const textSize = isMultiDay ? 'text-xs' : 'text-[10px]';
+                          const textSize = isMultiDay
+                            ? 'text-xs'
+                            : compactCount > 1
+                              ? 'text-[9px]'
+                              : 'text-[10px]';
                           const segStyle: React.CSSProperties = isWeek
                             ? {
                                 left: `${(seg.startIdx / days.length) * 100}%`,
                                 width: `${(daySpan / days.length) * 100}%`,
                                 top,
-                                height: barH,
+                                height: compactBarH,
                               }
                             : {
                                 left: seg.startIdx * DAY_COL_W,
                                 width: daySpan * DAY_COL_W,
                                 top,
-                                height: barH,
+                                height: compactBarH,
                               };
 
                           return (
@@ -1151,7 +1193,7 @@ function SpanPlanning(props: Readonly<{
                                 <ReservationPill
                                   reservation={seg.r}
                                   label={ownerMinimal ? ownerSegmentLabel(seg.r, mode) : segmentLabel(seg.r, mode)}
-                                  height={barH}
+                                  height={compactBarH}
                                   draggable={!ro && !isReservationLockedFromReservation(seg.r)}
                                   minimal={ownerMinimal}
                                   neutralStyle={ownerMinimal}
@@ -1166,7 +1208,7 @@ function SpanPlanning(props: Readonly<{
                                 <UnavailabilityPill
                                   item={seg.u}
                                   label={seg.u.title}
-                                  height={barH}
+                                  height={compactBarH}
                                   onClick={() => onOpenUnavailability(seg.u)}
                                   className={[
                                     'pointer-events-auto flex h-full w-full min-w-0 items-center text-left font-semibold text-white shadow-sm',

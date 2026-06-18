@@ -1,6 +1,7 @@
-/** Coordonnées par défaut : rade de Marseille (sorties mer / calanques). */
-export const DEFAULT_MARINE_LAT = 43.29;
-export const DEFAULT_MARINE_LON = 5.33;
+/** Coordonnées par défaut : Port Ouest Marseille — L'Estaque (base nautique Bleu Calanque). */
+export const DEFAULT_MARINE_LAT = 43.3586;
+export const DEFAULT_MARINE_LON = 5.2929;
+export const DEFAULT_MARINE_LOCATION_LABEL = 'Port Ouest';
 
 const METEO_FRANCE_MARINE_URL = 'https://meteofrance.com/meteo-marine';
 
@@ -11,6 +12,17 @@ export function getMarineForecastCoords(): { lat: number; lon: number } {
     return { lat, lon };
   }
   return { lat: DEFAULT_MARINE_LAT, lon: DEFAULT_MARINE_LON };
+}
+
+/** Libellé affiché pour le point de prévision (localité). */
+export function getMarineForecastLocationLabel(): string {
+  const custom = import.meta.env.VITE_MARINE_FORECAST_LABEL?.trim();
+  if (custom) return custom;
+  const { lat, lon } = getMarineForecastCoords();
+  if (lat === DEFAULT_MARINE_LAT && lon === DEFAULT_MARINE_LON) {
+    return DEFAULT_MARINE_LOCATION_LABEL;
+  }
+  return `${lat.toFixed(2)}°, ${lon.toFixed(2)}°`;
 }
 
 export function meteoFranceMarineUrl(): string {

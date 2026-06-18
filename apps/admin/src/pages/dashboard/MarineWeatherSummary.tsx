@@ -6,15 +6,13 @@ import type { DayBoatingOps } from '@/pages/dashboard/marineBoatingOps';
 import { fetchDayBoatingOps } from '@/pages/dashboard/marineBoatingOps';
 import type { MarineDaySummary, MarineRiskLevel } from './marineWeather';
 import {
-  DEFAULT_MARINE_LAT,
-  DEFAULT_MARINE_LON,
   fetchMarineDailyForecast,
   formatBeaufortFromKmh,
   formatKmh,
   formatMeters,
   formatSeconds,
   formatTempC,
-  getMarineForecastCoords,
+  getMarineForecastLocationLabel,
   getMarineHeadlineKind,
   kmhToKnots,
   meteoFranceMarineUrl,
@@ -84,11 +82,7 @@ export function MarineWeatherSummary() {
 
   const [marineSlide, setMarineSlide] = useState<MarineDaySlide>(null);
 
-  const { lat, lon } = getMarineForecastCoords();
-  const coordsHint =
-    lat === DEFAULT_MARINE_LAT && lon === DEFAULT_MARINE_LON
-      ? 'rade Marseille'
-      : `${lat.toFixed(2)}°, ${lon.toFixed(2)}°`;
+  const locationLabel = getMarineForecastLocationLabel();
 
   const hasDayAfter = (days?.length ?? 0) > IDX_DAY_AFTER;
 
@@ -178,7 +172,7 @@ export function MarineWeatherSummary() {
           </span>
           <div className="min-w-0">
             <h2 className="text-base font-semibold tracking-tight text-zinc-900">Météo mer</h2>
-            <p className="mt-0.5 truncate text-sm text-zinc-500">{coordsHint}</p>
+            <p className="mt-0.5 truncate text-sm text-zinc-500">{locationLabel}</p>
           </div>
         </div>
         <a
