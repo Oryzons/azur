@@ -29,7 +29,7 @@ export function OwnerFirstLoginPasswordModal({
           <h2 id="owner-first-login-title" className="text-xl font-bold tracking-tight text-zinc-900">
             Nouveau mot de passe
           </h2>
-          <p className="mt-1 text-sm text-zinc-500">Espace propriétaire — Azur</p>
+          <p className="mt-1 text-sm text-zinc-500">Espace propriétaire — Azure</p>
           <div className="mt-7">
             <FirstLoginPasswordForm
               defaultCurrentPassword={defaultCurrentPassword}

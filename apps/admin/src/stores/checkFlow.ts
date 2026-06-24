@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { InstallmentPlanItemView } from '@bleu-calanque/shared';
 import type { TabletFlowAccess } from '@/lib/checkFlowTabletAccess';
 import { api } from '@/lib/api';
 
@@ -155,7 +156,18 @@ interface CheckFlowState {
     },
   ) => Promise<CheckFlowSubmissionSummary>;
   fetchTabletReservations: (day?: string) => Promise<TabletReservationRow[]>;
+  fetchTabletReservation: (reservationId: string) => Promise<TabletReservationRow>;
 }
+
+export type TabletBoatRow = {
+  id: string;
+  name: string;
+  brand: string;
+  model: string;
+  maxPassengers: number;
+  detailsJson: string | null;
+  presentationPhotos: string[];
+};
 
 export type TabletReservationRow = {
   id: string;
@@ -163,7 +175,10 @@ export type TabletReservationRow = {
   startAt: string;
   endAt: string;
   status: string;
-  boat: { id: string; name: string; brand: string };
+  paymentCapturedAt: string | null;
+  cancelledAt: string | null;
+  installmentPlan: InstallmentPlanItemView[];
+  boat: TabletBoatRow;
   checkFlowSubmissions: Array<{
     id: string;
     kind: CheckFlowKind;
@@ -253,6 +268,13 @@ export const useCheckFlowStore = create<CheckFlowState>((set, get) => ({
     const { data } = await api.get<TabletReservationRow[]>('/check-flow/tablet/reservations', {
       params: day ? { day } : undefined,
     });
+    return data;
+  },
+
+  async fetchTabletReservation(reservationId) {
+    const { data } = await api.get<TabletReservationRow>(
+      `/check-flow/tablet/reservations/${reservationId}`,
+    );
     return data;
   },
 }));

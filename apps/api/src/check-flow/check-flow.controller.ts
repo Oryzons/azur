@@ -108,4 +108,10 @@ export class CheckFlowController {
     const d = day ? new Date(day) : new Date();
     return this.checkFlow.listTabletReservations(d);
   }
+
+  @Get('tablet/reservations/:reservationId')
+  @TabletAgent()
+  tabletReservation(@Param('reservationId', ParseUUIDPipe) reservationId: string) {
+    return this.checkFlow.getTabletReservation(reservationId);
+  }
 }

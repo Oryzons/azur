@@ -256,6 +256,15 @@ export class SettleInstallmentDto {
   paid?: boolean;
 }
 
+export class SettleSupplementDto {
+  @IsBoolean()
+  paid!: boolean;
+
+  @IsOptional()
+  @IsIn(PAYMENT_METHOD_VALUES as unknown as string[])
+  method?: (typeof PAYMENT_METHOD_VALUES)[number];
+}
+
 export class CancelReservationDto {
   @IsOptional()
   @IsString()

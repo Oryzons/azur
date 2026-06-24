@@ -222,8 +222,14 @@ model Member {
   airbusBadgePhotoUrl String?
   /// Numéro de pièce d'identité (réutilisable pour prochaines réservations).
   clientIdNumber String?
+  /// Type de pièce d'identité (ex. Carte d'identité, Passeport).
+  clientIdType   String?
   /// Numéro de permis bateau / certificat (réutilisable pour prochaines réservations).
   licenseNumber  String?
+  /// Type de permis bateau : cotier | hauturier | fluvial.
+  licenseType    String?
+  licenseCountry String?
+  licenseYear    String?
   cniFrontUrl  String?
   cniBackUrl   String?
   boatLicenseFrontUrl String?
@@ -238,6 +244,7 @@ model Member {
 
   boatsOwned Boat[] @relation("MemberOwnedBoats")
   reservationsAsClient Reservation[] @relation("ReservationClient")
+  extraRentalsAsClient ExtraRental[] @relation("ExtraRentalClient")
   memberCredits MemberCredit[]
   ownerPortalUsers User[] @relation("OwnerPortalAccount")
 }
@@ -485,6 +492,46 @@ model Extra {
   updatedAt     DateTime       @updatedAt
 
   reservationLinks ReservationExtra[]
+  rentals          ExtraRental[]
+}
+
+enum ExtraRentalStatus {
+  PENDING_PAYMENT
+  PAID
+  CANCELLED
+}
+
+/// Location d'un extra sans réservation bateau (wake, skipper seul, etc.).
+model ExtraRental {
+  id                String            @id @default(uuid())
+  extraId           String
+  quantity          Int               @default(1)
+  startAt           DateTime
+  endAt             DateTime
+  title             String
+
+  clientMemberId    String?
+  clientEmail       String?
+  clientFirstName   String?
+  clientLastName    String?
+  clientPhone       String?
+
+  paymentChannel    PaymentChannel    @default(ONLINE)
+  totalDueCents     Int?
+  status            ExtraRentalStatus @default(PENDING_PAYMENT)
+  paymentCapturedAt DateTime?
+  settlementNote    String?
+  internalNote      String?
+  cancelledAt       DateTime?
+
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  extra             Extra             @relation(fields: [extraId], references: [id], onDelete: Cascade)
+  clientMember      Member?           @relation("ExtraRentalClient", fields: [clientMemberId], references: [id], onDelete: SetNull)
+
+  @@index([extraId])
+  @@index([startAt])
 }
 
 model ReservationExtra {

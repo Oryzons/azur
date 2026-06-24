@@ -1,3 +1,4 @@
+import { BOAT_LICENSE_TYPE_OPTIONS } from '@bleu-calanque/shared';
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
 import { Ban, TicketPercent, ChevronDown, ChevronUp } from 'lucide-react';
 import type { ClientType, Civility, MemberClient } from '@/stores/members';
@@ -770,12 +771,18 @@ export function WizardStep3(props: Readonly<{
           </label>
           <label className="block">
             <FieldLabel>Type de permis (chef de bord)</FieldLabel>
-            <input
+            <select
               value={details.licenseType}
               onChange={(e) => setDetails((d) => ({ ...d, licenseType: e.target.value }))}
               className={inputBase()}
-              placeholder="Ex. Permis côtier, Permis fluvial…"
-            />
+            >
+              <option value="">— Choisir —</option>
+              {BOAT_LICENSE_TYPE_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
           </label>
           <label className="block">
             <FieldLabel>N° permis</FieldLabel>

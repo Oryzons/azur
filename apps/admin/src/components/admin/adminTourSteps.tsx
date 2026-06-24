@@ -8,7 +8,7 @@ export const ADMIN_TOUR_STEPS: InteractiveTourStep[] = [
     placement: 'center',
     body: (
       <>
-        Voici le <strong>back-office Azur</strong> pour gérer locations, flotte, clients et finances. Ce guide
+        Voici le <strong>back-office Azure</strong> pour gérer locations, flotte, clients et finances. Ce guide
         interactif vous montre chaque section — suivez les zones surlignées. Vous pouvez{' '}
         <strong>Ignorer</strong> à tout moment.
       </>

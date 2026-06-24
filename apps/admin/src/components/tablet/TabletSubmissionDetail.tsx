@@ -4,7 +4,7 @@ import {
   submissionSummaryLines,
   type CheckFlowSubmissionSummary,
 } from '@/stores/checkFlow';
-import { TB } from '@/lib/tabletTheme';
+import { CF } from '@/lib/tabletCheckFlowTheme';
 
 function parsePhotoUrls(json: string): string[] {
   try {
@@ -23,9 +23,9 @@ export function TabletSubmissionDetail({ row }: { row: CheckFlowSubmissionSummar
 
   return (
     <div className="space-y-5">
-      <div className={TB.card}>
-        <p className={TB.label}>{CHECK_FLOW_KIND_LABELS[row.kind]}</p>
-        <p className="mt-1 text-lg font-bold text-zinc-900">{row.reservation?.title ?? 'Réservation'}</p>
+      <div className={CF.card}>
+        <p className={CF.label}>{CHECK_FLOW_KIND_LABELS[row.kind]}</p>
+        <p className="mt-2 text-lg font-bold text-zinc-900">{row.reservation?.title ?? 'Réservation'}</p>
         {row.reservation?.boat ? (
           <p className="mt-1 text-sm text-zinc-500">
             {row.reservation.boat.brand} {row.reservation.boat.name}
@@ -38,8 +38,8 @@ export function TabletSubmissionDetail({ row }: { row: CheckFlowSubmissionSummar
       </div>
 
       {lines.length > 0 ? (
-        <section className={TB.card}>
-          <h2 className={TB.label}>Résumé</h2>
+        <section className={CF.card}>
+          <h2 className={CF.label}>Résumé</h2>
           <ul className="mt-3 space-y-2 text-sm text-zinc-700">
             {lines.map((l) => (
               <li key={l}>{l}</li>
@@ -50,9 +50,9 @@ export function TabletSubmissionDetail({ row }: { row: CheckFlowSubmissionSummar
 
       {row.answers && row.answers.length > 0 ? (
         <section className="space-y-3">
-          <h2 className={TB.label}>Détail des réponses</h2>
+          <h2 className={CF.label}>Détail des réponses</h2>
           {row.answers.map((a) => (
-            <div key={a.id} className={TB.card}>
+            <div key={a.id} className={CF.card}>
               <p className="font-semibold text-zinc-900">{a.question.label}</p>
               {a.valueText ? (
                 <p className="mt-1 text-sm text-zinc-700">
@@ -75,8 +75,8 @@ export function TabletSubmissionDetail({ row }: { row: CheckFlowSubmissionSummar
       ) : null}
 
       {row.clientSignatureUrl || row.agentSignatureUrl ? (
-        <section className={TB.card}>
-          <h2 className={TB.label}>Signatures</h2>
+        <section className={CF.card}>
+          <h2 className={CF.label}>Signatures</h2>
           <div className="mt-3 grid grid-cols-1 gap-4">
             {row.clientSignatureUrl ? (
               <div>
@@ -84,7 +84,7 @@ export function TabletSubmissionDetail({ row }: { row: CheckFlowSubmissionSummar
                 <img
                   src={row.clientSignatureUrl}
                   alt="Signature client"
-                  className="mt-2 max-h-28 w-full rounded-xl border border-zinc-200/90 bg-white object-contain p-2"
+                  className="mt-2 max-h-28 w-full rounded-2xl border border-zinc-200/80 bg-zinc-50 object-contain p-2"
                 />
               </div>
             ) : null}
@@ -94,7 +94,7 @@ export function TabletSubmissionDetail({ row }: { row: CheckFlowSubmissionSummar
                 <img
                   src={row.agentSignatureUrl}
                   alt="Signature du loueur"
-                  className="mt-2 max-h-28 w-full rounded-xl border border-zinc-200/90 bg-white object-contain p-2"
+                  className="mt-2 max-h-28 w-full rounded-2xl border border-zinc-200/80 bg-zinc-50 object-contain p-2"
                 />
               </div>
             ) : null}

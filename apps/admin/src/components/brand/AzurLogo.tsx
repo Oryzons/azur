@@ -64,7 +64,7 @@ function WaveBadge(props: Readonly<{ tone: Tone; animated?: boolean }>) {
 }
 
 export function AzurLogo(props: AzurLogoProps) {
-  const { variant = 'full', className, tone = 'brand', animated = false, title = 'Azur' } = props;
+  const { variant = 'full', className, tone = 'brand', animated = false, title = 'Azure' } = props;
   const t = tokens(tone);
 
   if (variant === 'mark') {
@@ -97,7 +97,7 @@ export function AzurLogo(props: AzurLogoProps) {
       >
         <title>{title}</title>
         <text x="0" y="34" fill={t.text} fontFamily={FONT} fontSize={30} fontWeight={600} letterSpacing="0.01em">
-          Azur
+          Azure
         </text>
       </svg>
     );
@@ -128,7 +128,7 @@ export function AzurLogo(props: AzurLogoProps) {
           className={animated ? 'bc-logo-word' : undefined}
           style={animated ? { animationDelay: '520ms' } : undefined}
         >
-          Azur
+          Azure
         </text>
       </g>
     </svg>

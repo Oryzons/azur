@@ -16,6 +16,9 @@ import { useOwnerFleetScope } from '@/lib/ownerFleetScope';
 import { isOwnerUser } from '@/lib/userRoles';
 import { useAuthStore } from '@/stores/auth';
 import { useExtrasStore } from '@/stores/extras';
+import { useCouponsStore } from '@/stores/coupons';
+import { buildReservationPaymentContext } from '@/lib/reservationOfflineDue';
+import { reservationPillColor } from '@/lib/reservationStatus';
 import {
   matchesReservationListFilter,
   ownerReservationSearchHaystack,
@@ -74,6 +77,11 @@ export function ReservationsPage() {
   const refreshReservations = useReservationsStore((s) => s.refresh);
   const coreReady = useCoreStoresReady();
   const extrasCatalog = useExtrasStore((s) => s.extras);
+  const couponsCatalog = useCouponsStore((s) => s.coupons);
+  const pricingDeps = useMemo(
+    () => ({ coupons: couponsCatalog, allReservations: reservations }),
+    [couponsCatalog, reservations],
+  );
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [listSearch, setListSearch] = usePersistedString('reservations.listSearch');
   const [listFilter, setListFilter] = usePersistedEnum<ReservationListFilter>(
@@ -153,7 +161,7 @@ export function ReservationsPage() {
       rows = rows.filter((r) => boatById.get(r.boatId)?.boatType === filterBoatType);
     }
 
-    rows = rows.filter((r) => matchesReservationListFilter(r, listFilter));
+    rows = rows.filter((r) => matchesReservationListFilter(r, listFilter, new Date(), extrasCatalog, pricingDeps));
 
     const q = listSearch.trim().toLowerCase();
     if (q) {
@@ -179,6 +187,8 @@ export function ReservationsPage() {
     boatById,
     boats,
     isOwner,
+    extrasCatalog,
+    pricingDeps,
   ]);
 
   useEffect(() => {
@@ -194,15 +204,17 @@ export function ReservationsPage() {
   const now = new Date();
   const stats = useMemo(() => {
     const upcoming = list.filter((r) => r.end.getTime() >= now.getTime());
-    const paid = list.filter((r) => reservationStatusBadge(r, extrasCatalog).label === 'Payée');
-    const pending = list.filter((r) => reservationStatusBadge(r, extrasCatalog).label === 'En attente de paiement');
+    const paid = list.filter((r) => reservationStatusBadge(r, extrasCatalog, pricingDeps).label === 'Payée');
+    const pending = list.filter(
+      (r) => reservationStatusBadge(r, extrasCatalog, pricingDeps).label === 'En attente de paiement',
+    );
     return {
       total: list.length,
       upcoming: upcoming.length,
       paid: paid.length,
       pending: pending.length,
     };
-  }, [list, now]);
+  }, [list, now, extrasCatalog, pricingDeps]);
 
   const reservationsFiltersActiveCount =
     (filterDateFrom.trim() ? 1 : 0) +
@@ -465,8 +477,22 @@ export function ReservationsPage() {
               ) : (
                 listFiltered.map((r) => {
                   const active = r.id === selectedId;
-                  const badge = reservationStatusBadge(r, extrasCatalog);
+                  const badge = reservationStatusBadge(r, extrasCatalog, pricingDeps);
                   const client = reservationClientLabel(r);
+                  const paymentCtx = buildReservationPaymentContext(
+                    r,
+                    extrasCatalog,
+                    couponsCatalog,
+                    reservations,
+                  );
+                  const statusColor = reservationPillColor({
+                    ...r,
+                    offlineDueCents: paymentCtx.offlineDueCents,
+                    offlinePaidCents: paymentCtx.offlinePaidCents,
+                    outstandingOnlineDueCents: paymentCtx.outstandingOnlineDueCents,
+                    paymentLinkUrl: paymentCtx.paymentLinkUrl ?? r.paymentLinkUrl,
+                    remainingTotalCents: paymentCtx.remainingTotalCents,
+                  });
                   const upcoming = r.end.getTime() >= now.getTime();
                   return (
                     <button
@@ -482,9 +508,10 @@ export function ReservationsPage() {
                     >
                       <span
                         className={[
-                          'mt-1.5 inline-flex h-2.5 w-2.5 shrink-0 rounded-full',
-                          upcoming ? 'bg-emerald-500' : 'bg-zinc-300',
+                          'mt-1.5 inline-flex h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-black/10',
+                          isOwner ? '' : upcoming ? 'bg-emerald-500' : 'bg-zinc-300',
                         ].join(' ')}
+                        style={isOwner ? { background: statusColor } : undefined}
                         aria-hidden
                       />
                       <div className="min-w-0 flex-1">

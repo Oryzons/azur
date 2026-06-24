@@ -29,7 +29,7 @@ export function AdminFirstLoginPasswordModal({
           <h2 id="admin-first-login-title" className="text-xl font-bold tracking-tight text-zinc-900">
             Nouveau mot de passe
           </h2>
-          <p className="mt-1 text-sm text-zinc-500">Back-office — Azur</p>
+          <p className="mt-1 text-sm text-zinc-500">Back-office — Azure</p>
           <div className="mt-7">
             <FirstLoginPasswordForm
               variant="admin"

@@ -5,7 +5,8 @@ export type AdminBroadcastMessage =
   | { type: 'payment-captured'; reservationId: string }
   | { type: 'poll-notifications' }
   | { type: 'reservations-changed' }
-  | { type: 'unavailabilities-changed' };
+  | { type: 'unavailabilities-changed' }
+  | { type: 'extra-rentals-changed' };
 
 export function postAdminBroadcast(message: AdminBroadcastMessage) {
   try {

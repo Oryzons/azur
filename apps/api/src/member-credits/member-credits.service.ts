@@ -1,5 +1,9 @@
 import { Injectable } from '@nestjs/common';
+import { ExtraBillingUnit, ExtraPriceKind } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { resolveOnlinePaymentBalance, resolveStripeGrossPaidCents, readDetailsPaymentCents } from '@bleu-calanque/shared';
+import { computeReservationTotalDueCents, reservationPricingInputFromRow } from '../pricing/reservation-pricing';
+import { mapReservationExtrasForPricing } from '../pricing/reservation-pricing-map';
 
 @Injectable()
 export class MemberCreditsService {
@@ -92,11 +96,71 @@ export class MemberCreditsService {
     const credits = agg._sum.amountCents ?? 0;
     const r = await this.prisma.reservation.findUnique({
       where: { id: reservationId },
-      select: { totalDueCents: true, paymentCapturedAt: true },
+      select: {
+        id: true,
+        totalDueCents: true,
+        paymentCapturedAt: true,
+        createdAt: true,
+        rentalPriceCents: true,
+        discountPercent: true,
+        couponCode: true,
+        clientMemberId: true,
+        clientEmail: true,
+        startAt: true,
+        endAt: true,
+        stripeNetCents: true,
+        stripeFeeCents: true,
+        detailsJson: true,
+        installmentPlan: { orderBy: { sequence: 'asc' } },
+        extras: {
+          include: {
+            extra: { select: { priceKind: true, priceValue: true, billingUnit: true } },
+          },
+        },
+      },
     });
     if (!r?.paymentCapturedAt) return 0;
-    const stripePortion = (r.totalDueCents ?? 0) >= 50 ? (r.totalDueCents ?? 0) : 0;
-    return credits + stripePortion;
+
+    const paidInstallments = r.installmentPlan.filter((p) => p.status === 'PAID');
+    if (paidInstallments.length > 0) {
+      return credits + paidInstallments.reduce((sum, p) => sum + p.amountCents, 0);
+    }
+
+    const grossOnline = await computeReservationTotalDueCents(
+      this.prisma,
+      reservationPricingInputFromRow(
+        r,
+        mapReservationExtrasForPricing(
+          r.extras as {
+            quantity: number;
+            extra: { priceKind: ExtraPriceKind; priceValue: number; billingUnit: ExtraBillingUnit };
+          }[],
+          { onlineOnly: true },
+        ),
+      ),
+    );
+    const stripePaid = resolveStripeGrossPaidCents(r);
+    const detailsPayment = readDetailsPaymentCents(r.detailsJson);
+    const supplementPaidCents = detailsPayment.supplementPaidCents;
+    const baseline = detailsPayment.onlinePaidBaselineCents;
+    const remainingStored = Math.max(0, r.totalDueCents ?? 0);
+    const fromRecords = credits + Math.max(stripePaid, baseline) + supplementPaidCents;
+    if (fromRecords >= 50) {
+      return fromRecords;
+    }
+    /** Supplément en attente : totalDueCents = delta, encaissements = catalogue − delta. */
+    if (remainingStored >= 50 && remainingStored < grossOnline) {
+      return Math.max(fromRecords, grossOnline - remainingStored);
+    }
+    const { collectedOnlineCents } = resolveOnlinePaymentBalance({
+      paymentCapturedAt: r.paymentCapturedAt,
+      totalDueCents: r.totalDueCents,
+      payableOnlineCents: grossOnline,
+      storeCreditAppliedCents: credits,
+      stripePaidCents: stripePaid,
+      supplementPaidCents,
+    });
+    return collectedOnlineCents;
   }
 
   /** Consomme les avoirs disponibles (FIFO) jusqu'à `maxCents`. */

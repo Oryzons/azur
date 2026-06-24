@@ -5,6 +5,7 @@ export * from './coupon';
 export * from './catalog';
 export * from './announcement';
 export * from './extra';
+export * from './extra-rental';
 export * from './pricing';
 export * from './check-flow';
 export * from './members-import';

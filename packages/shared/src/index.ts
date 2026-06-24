@@ -1,3 +1,5 @@
+export * from './boat-license-types';
+export * from './boat-emplacement';
 export * from './brand';
 export * from './enums';
 export * from './reservation-lock';

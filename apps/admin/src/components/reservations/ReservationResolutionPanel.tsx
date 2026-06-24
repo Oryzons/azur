@@ -70,7 +70,7 @@ export function ReservationResolutionPanel(props: Readonly<Props>) {
   const [endTime, setEndTime] = useState(toTime(r.end));
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
-  const [notifyClient, setNotifyClient] = useState(true);
+  const [notifyClient, setNotifyClient] = useState(false);
   const [creditLowerDifference, setCreditLowerDifference] = useState(true);
   const [cancelReservation, setCancelReservation] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -93,6 +93,10 @@ export function ReservationResolutionPanel(props: Readonly<Props>) {
   useEffect(() => {
     if (!pricingHydrated) void refreshPricing();
   }, [pricingHydrated, refreshPricing]);
+
+  useEffect(() => {
+    setNotifyClient(kind !== 'move');
+  }, [kind]);
 
   useEffect(() => {
     if (maxRefundEuros != null && maxRefundEuros > 0) {

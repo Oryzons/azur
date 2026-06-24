@@ -1,7 +1,6 @@
+import { Ban } from 'lucide-react';
 import type { BoatUnavailability } from '@/stores/unavailabilities';
-
-const UNAVAIL_BG = '#71717a';
-const UNAVAIL_FG = '#ffffff';
+import { CALENDAR_UNAVAILABILITY_COLORS } from '@/lib/reservationStatus';
 
 export function UnavailabilityPill(props: Readonly<{
   item: BoatUnavailability;
@@ -18,14 +17,23 @@ export function UnavailabilityPill(props: Readonly<{
       type="button"
       data-unavailability-pill
       className={className}
-      style={{ background: UNAVAIL_BG, color: UNAVAIL_FG, height, minHeight, ...style }}
+      style={{
+        background: CALENDAR_UNAVAILABILITY_COLORS.background,
+        color: CALENDAR_UNAVAILABILITY_COLORS.text,
+        height,
+        minHeight,
+        ...style,
+      }}
       title={item.note ? `${label} — ${item.note}` : label}
       onClick={(e) => {
         e.stopPropagation();
         onClick?.();
       }}
     >
-      <span className="block w-full min-w-0 truncate text-left">{label}</span>
+      <span className="flex min-w-0 items-center gap-1 truncate text-left">
+        <Ban className="h-3 w-3 shrink-0 opacity-80" strokeWidth={2.25} aria-hidden />
+        <span className="truncate">{label}</span>
+      </span>
     </button>
   );
 }

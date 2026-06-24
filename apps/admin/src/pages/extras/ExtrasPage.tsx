@@ -9,6 +9,7 @@ import {
   Boxes,
   CreditCard,
   FileText,
+  History,
 } from 'lucide-react';
 import { RoundCheckbox } from '@/components/RoundCheckbox';
 import { ContentReveal } from '@/components/ui/ContentReveal';
@@ -36,8 +37,15 @@ import { useDefaultPageFilters } from '@/contexts/PageFiltersContext';
 import { usePersistedEnum, usePersistedString } from '@/lib/pageFilterStorage';
 import { EXTRA_ICON_OPTIONS } from '@/lib/extraIcons';
 import { resolveExtraIcon } from '@bleu-calanque/shared';
+import {
+  extraRentalClientLabel,
+  extraRentalStatusLabel,
+  formatExtraRentalAmount,
+  useExtraRentalsStore,
+  type ExtraRental,
+} from '@/stores/extraRentals';
 
-type EditorSection = 'general' | 'pricing' | 'availability';
+type EditorSection = 'general' | 'pricing' | 'availability' | 'history';
 type ListFilter = 'all' | 'active' | 'inactive';
 
 function inputCls() {
@@ -96,10 +104,32 @@ export function ExtrasPage() {
   const [formError, setFormError] = useState('');
   const [priceDraft, setPriceDraft] = useState('');
   const [vatDraft, setVatDraft] = useState('');
+  const [rentalHistory, setRentalHistory] = useState<ExtraRental[]>([]);
+  const [rentalsLoading, setRentalsLoading] = useState(false);
+  const listExtraRentals = useExtraRentalsStore((s) => s.listByExtra);
 
   useEffect(() => {
     if (!hydrated) void refresh();
   }, [hydrated, refresh]);
+
+  useEffect(() => {
+    if (section !== 'history' || !selectedId) {
+      setRentalHistory([]);
+      return;
+    }
+    let cancelled = false;
+    setRentalsLoading(true);
+    void listExtraRentals(selectedId)
+      .then((rows) => {
+        if (!cancelled) setRentalHistory(rows);
+      })
+      .finally(() => {
+        if (!cancelled) setRentalsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [section, selectedId, listExtraRentals]);
 
   const sorted = useMemo(
     () => [...extras].sort((a, b) => a.name.localeCompare(b.name, 'fr')),
@@ -346,6 +376,7 @@ export function ExtrasPage() {
                       { id: 'general' as const, label: 'Général', Icon: FileText },
                       { id: 'pricing' as const, label: 'Tarif', Icon: Banknote },
                       { id: 'availability' as const, label: 'Stock & paiement', Icon: CreditCard },
+                      { id: 'history' as const, label: 'Historique', Icon: History },
                     ] as const
                   ).map(({ id, label, Icon }) => (
                     <button
@@ -582,6 +613,63 @@ export function ExtrasPage() {
                           de réservation.
                         </p>
                       </div>
+                    </div>
+                  ) : null}
+
+                  {section === 'history' ? (
+                    <div className="space-y-3">
+                      <p className="text-xs text-zinc-500">
+                        Locations de cet extra sans réservation bateau (wake, skipper seul, etc.).
+                      </p>
+                      {rentalsLoading ? (
+                        <p className="text-sm text-zinc-500">Chargement…</p>
+                      ) : rentalHistory.length === 0 ? (
+                        <p className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50 px-4 py-6 text-center text-sm text-zinc-500">
+                          Aucune location pour le moment.
+                        </p>
+                      ) : (
+                        <ul className="divide-y divide-zinc-100 rounded-xl border border-zinc-200/90">
+                          {rentalHistory.map((row) => {
+                            const start = new Date(row.startAt);
+                            const end = new Date(row.endAt);
+                            const range = `${start.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })} · ${start.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })} → ${end.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`;
+                            const status = extraRentalStatusLabel(row.status);
+                            const statusCls =
+                              row.status === 'PAID'
+                                ? 'bg-emerald-50 text-emerald-800 ring-emerald-200'
+                                : row.status === 'CANCELLED'
+                                  ? 'bg-zinc-100 text-zinc-600 ring-zinc-200'
+                                  : 'bg-amber-50 text-amber-900 ring-amber-200';
+                            return (
+                              <li key={row.id} className="flex flex-wrap items-start justify-between gap-3 px-4 py-3">
+                                <div className="min-w-0">
+                                  <p className="text-sm font-semibold text-zinc-900">
+                                    {extraRentalClientLabel(row)}
+                                    {row.quantity > 1 ? ` × ${row.quantity}` : ''}
+                                  </p>
+                                  <p className="mt-0.5 text-xs text-zinc-500">{range}</p>
+                                  {row.clientEmail ? (
+                                    <p className="mt-0.5 text-xs text-zinc-400">{row.clientEmail}</p>
+                                  ) : null}
+                                </div>
+                                <div className="text-right">
+                                  <span
+                                    className={[
+                                      'inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1',
+                                      statusCls,
+                                    ].join(' ')}
+                                  >
+                                    {status}
+                                  </span>
+                                  <p className="mt-1 text-sm font-semibold text-zinc-800">
+                                    {formatExtraRentalAmount(row.totalDueCents)}
+                                  </p>
+                                </div>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
                     </div>
                   ) : null}
                 </div>

@@ -107,9 +107,9 @@ export function TabletCalendarPage() {
               className={[
                 'flex min-h-[4.5rem] flex-col items-center justify-center rounded-2xl px-1 py-2 text-center touch-manipulation shadow-sm',
                 active
-                  ? 'bg-[#416B9F] text-white shadow-[#416B9F]/25'
-                  : 'border border-zinc-200/90 bg-white text-zinc-600',
-                isToday && !active ? 'ring-2 ring-[#416B9F]/35' : '',
+                  ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25'
+                  : 'border border-zinc-200/80 bg-white text-zinc-600',
+                isToday && !active ? 'ring-2 ring-blue-500/30' : '',
               ].join(' ')}
             >
               <span className="text-[10px] font-semibold uppercase opacity-80">
@@ -120,7 +120,7 @@ export function TabletCalendarPage() {
                 <span
                   className={[
                     'mt-0.5 rounded-full px-1.5 text-[10px] font-bold',
-                    active ? 'bg-white/25 text-white' : 'bg-[#416B9F]/10 text-[#416B9F]',
+                    active ? 'bg-white/25 text-white' : 'bg-blue-500/10 text-blue-600',
                   ].join(' ')}
                 >
                   {n}
@@ -148,7 +148,7 @@ export function TabletCalendarPage() {
       )}
 
       <p className="mt-6 text-center">
-        <Link to="/tablette/reservations" className="text-sm font-semibold text-[#416B9F] hover:underline">
+        <Link to="/tablette/reservations" className="text-sm font-semibold text-zinc-700 hover:underline">
           Voir toutes les réservations du jour →
         </Link>
       </p>

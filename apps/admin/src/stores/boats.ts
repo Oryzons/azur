@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { boatEmplacementValidationError, formatBoatEmplacementInput } from '@bleu-calanque/shared';
 import { api } from '@/lib/api';
 
 export type BoatType =
@@ -24,6 +25,8 @@ export type BoatDetails = {
     renovationYear: string;
     /** Zone / catégorie de navigation autorisée (contrat PDF). */
     authorizedNavigationZone: string;
+    /** Emplacement portuaire (ex. A45, C123). */
+    emplacement: string;
   };
   dimensions: { longueur: string; largeur: string; tirantEau: string };
   motorisation: {
@@ -100,6 +103,7 @@ export function defaultBoatDetails(): BoatDetails {
       constructionYear: '',
       renovationYear: '',
       authorizedNavigationZone: '',
+      emplacement: '',
     },
     dimensions: { longueur: '', largeur: '', tirantEau: '' },
     motorisation: {
@@ -195,7 +199,14 @@ function mergeBoatDetails(raw: unknown): BoatDetails {
       };
 
   return {
-    generales: { ...base.generales, ...(r.generales ?? {}) },
+    generales: {
+      ...base.generales,
+      ...(r.generales ?? {}),
+      emplacement:
+        typeof r.generales?.emplacement === 'string'
+          ? formatBoatEmplacementInput(r.generales.emplacement)
+          : base.generales.emplacement,
+    },
     dimensions: { ...base.dimensions, ...(r.dimensions ?? {}) },
     motorisation: { ...base.motorisation, ...(r.motorisation ?? {}) },
     equipements: {
@@ -208,6 +219,21 @@ function mergeBoatDetails(raw: unknown): BoatDetails {
       },
     },
     legalite,
+  };
+}
+
+function validateBoatDetails(details: BoatDetails): { ok: true; details: BoatDetails } | { ok: false; error: string } {
+  const emplacementErr = boatEmplacementValidationError(details.generales.emplacement);
+  if (emplacementErr) return { ok: false, error: emplacementErr };
+  return {
+    ok: true,
+    details: {
+      ...details,
+      generales: {
+        ...details.generales,
+        emplacement: formatBoatEmplacementInput(details.generales.emplacement),
+      },
+    },
   };
 }
 
@@ -308,7 +334,10 @@ export const useBoatsStore = create<BoatsState>()(
           return { ok: false, error: 'Le nombre de passagers doit être un nombre entre 1 et 200.' };
         }
 
-        const details = mergeBoatDetails(b.details);
+        const mergedDetails = mergeBoatDetails(b.details);
+        const validated = validateBoatDetails(mergedDetails);
+        if (!validated.ok) return { ok: false, error: validated.error };
+        const details = validated.details;
         const tmpId = tmpIdNow();
         set((s) => ({
           boats: [
@@ -362,7 +391,10 @@ export const useBoatsStore = create<BoatsState>()(
         const prev = get().boats.find((x) => x.id === id);
         if (!prev) return { ok: false, error: 'Bateau introuvable.' };
 
-        const details = mergeBoatDetails(b.details);
+        const mergedDetails = mergeBoatDetails(b.details);
+        const validated = validateBoatDetails(mergedDetails);
+        if (!validated.ok) return { ok: false, error: validated.error };
+        const details = validated.details;
         const photos = b.presentationPhotos ?? [];
         const optimistic: Boat = {
           ...prev,

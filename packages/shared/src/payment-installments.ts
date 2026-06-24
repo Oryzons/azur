@@ -162,8 +162,87 @@ export function resolveStoreCreditAppliedCents(
 ): number {
   if (recordedAppliedCents != null && recordedAppliedCents > 0) return recordedAppliedCents;
   if (totalDueCents == null) return 0;
-  const delta = payableOnlineCents - totalDueCents;
+  const remaining = Math.max(0, totalDueCents);
+  /** Après paiement intégral, totalDueCents vaut 0 : ne pas inférer un avoir = payable. */
+  if (remaining < 50) return 0;
+  const delta = payableOnlineCents - remaining;
   return delta > 0 ? delta : 0;
+}
+
+export function resolveStripeGrossPaidCents(input: {
+  stripeNetCents?: number | null;
+  stripeFeeCents?: number | null;
+}): number {
+  if (input.stripeNetCents == null || input.stripeFeeCents == null) return 0;
+  return Math.max(0, input.stripeNetCents + input.stripeFeeCents);
+}
+
+export type OnlinePaymentBalanceInput = {
+  paymentCapturedAt?: string | Date | null;
+  totalDueCents?: number | null;
+  payableOnlineCents: number;
+  storeCreditAppliedCents?: number;
+  stripePaidCents?: number;
+  /** Suppléments encaissés après paiement initial (CB, TPE, espèces, virement), centimes. */
+  supplementPaidCents?: number;
+};
+
+/**
+ * Part en ligne déjà encaissée (avoir + CB/TPE) et supplément en ligne restant.
+ * Aligné sur la logique serveur `collectedCentsOnReservation`.
+ */
+export function resolveOnlinePaymentBalance(input: OnlinePaymentBalanceInput): {
+  collectedOnlineCents: number;
+  outstandingOnlineDueCents: number;
+} {
+  const payable = Math.max(0, input.payableOnlineCents);
+  const credits = Math.max(0, input.storeCreditAppliedCents ?? 0);
+  const stripe = Math.max(0, input.stripePaidCents ?? 0);
+  const supplement = Math.max(0, input.supplementPaidCents ?? 0);
+  const remaining = Math.max(0, input.totalDueCents ?? 0);
+  const fromRecords = credits + stripe + supplement;
+
+  if (!hasCapturedOnlinePayment(input.paymentCapturedAt)) {
+    return {
+      collectedOnlineCents: 0,
+      outstandingOnlineDueCents: Math.max(0, payable - credits),
+    };
+  }
+
+  /** Supplément en attente (extras, déplacement…). */
+  if (remaining >= 50 && remaining < payable) {
+    const collected = Math.max(payable - remaining, fromRecords);
+    return {
+      collectedOnlineCents: collected,
+      outstandingOnlineDueCents: remaining,
+    };
+  }
+
+  /** Paiement initial + suppléments soldés (totalDueCents = 0). */
+  if (remaining < 50) {
+    const collected = fromRecords > 0 ? fromRecords : Math.max(0, payable - credits);
+    return {
+      collectedOnlineCents: collected,
+      outstandingOnlineDueCents: 0,
+    };
+  }
+
+  /**
+   * totalDueCents encore égal au payable alors que le paiement est capturé :
+   * base non resynchronisée — considérer la part en ligne comme réglée.
+   */
+  if (remaining >= payable) {
+    const collected = fromRecords > 0 ? fromRecords : Math.max(0, payable - credits);
+    return {
+      collectedOnlineCents: collected,
+      outstandingOnlineDueCents: 0,
+    };
+  }
+
+  return {
+    collectedOnlineCents: fromRecords,
+    outstandingOnlineDueCents: Math.max(0, payable - credits - stripe - supplement),
+  };
 }
 
 function parseCapturedAt(value: Date | string | null | undefined): Date | null {
@@ -279,21 +358,210 @@ export function hasOutstandingOfflineDue(offlineDueCents: number): boolean {
   return offlineDueCents >= 50;
 }
 
-/** Afficher « payée partiellement » : échéances incomplètes ou en ligne réglé + hors ligne restant. */
+/** Supplément en ligne (extras, déplacement) encore dû après encaissement initial. */
+export function hasOutstandingOnlineSupplement(input: {
+  paymentCapturedAt?: string | Date | null;
+  outstandingOnlineDueCents?: number;
+  paymentLinkUrl?: string | null;
+  /** Solde global restant — prioritaire sur un lien Stripe obsolète. */
+  remainingTotalCents?: number;
+}): boolean {
+  if (!hasCapturedOnlinePayment(input.paymentCapturedAt)) return false;
+  if (input.remainingTotalCents != null && input.remainingTotalCents < 50) return false;
+  if ((input.outstandingOnlineDueCents ?? 0) >= 50) return true;
+  if ((input.remainingTotalCents ?? 0) >= 50) return true;
+  // Lien Stripe seul (souvent non effacé après paiement) ≠ supplément en attente.
+  return false;
+}
+
+/** Afficher « payée partiellement » : échéances incomplètes ou solde réel restant (hors ligne ou en ligne). */
 export function shouldShowPartialPaymentVisual(input: {
   paymentCapturedAt?: string | Date | null;
   installmentPlan?: readonly InstallmentPlanItemView[];
   offlineDueCents?: number;
+  /** Part sur place déjà encaissée (TPE, espèces…). */
+  offlinePaidCents?: number;
+  outstandingOnlineDueCents?: number;
+  paymentLinkUrl?: string | null;
+  /** Reste à payer global (centimes) — prioritaire si fourni. */
+  remainingTotalCents?: number;
 }): boolean {
   const plan = input.installmentPlan ?? [];
-  const offlineDue = Math.max(0, input.offlineDueCents ?? 0);
-  if (isMultiInstallmentPlan(plan)) {
-    if (isInstallmentPlanFullyPaid(plan)) {
-      return hasOutstandingOfflineDue(offlineDue);
+  const offlineRemaining = Math.max(
+    0,
+    (input.offlineDueCents ?? 0) - (input.offlinePaidCents ?? 0),
+  );
+
+  if (input.remainingTotalCents != null && input.remainingTotalCents < 50) {
+    if (
+      hasCapturedOnlinePayment(input.paymentCapturedAt) &&
+      hasOutstandingOfflineDue(offlineRemaining)
+    ) {
+      return true;
     }
-    return hasPartialInstallmentPayment(plan);
+    return false;
   }
-  return hasOutstandingOfflineDue(offlineDue) && hasCapturedOnlinePayment(input.paymentCapturedAt);
+
+  if (
+    hasCapturedOnlinePayment(input.paymentCapturedAt) &&
+    (input.remainingTotalCents ?? 0) >= 50
+  ) {
+    return true;
+  }
+
+  if (hasOutstandingOnlineSupplement(input)) return true;
+
+  if (isMultiInstallmentPlan(plan)) {
+    if (!isInstallmentPlanFullyPaid(plan)) {
+      return hasPartialInstallmentPayment(plan);
+    }
+    return hasOutstandingOfflineDue(offlineRemaining);
+  }
+
+  return hasOutstandingOfflineDue(offlineRemaining) && hasCapturedOnlinePayment(input.paymentCapturedAt);
+}
+
+/** Lit les montants de paiement persistés dans detailsJson. */
+export function readDetailsPaymentCents(detailsJson?: string | null): {
+  onlinePaidBaselineCents: number;
+  supplementPaidCents: number;
+  offlinePaidCents: number;
+} {
+  if (!detailsJson?.trim()) {
+    return { onlinePaidBaselineCents: 0, supplementPaidCents: 0, offlinePaidCents: 0 };
+  }
+  try {
+    const parsed = JSON.parse(detailsJson) as Record<string, unknown>;
+    const read = (key: string) => {
+      const n = Number(parsed?.[key]);
+      return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
+    };
+    return {
+      onlinePaidBaselineCents: read('onlinePaidBaselineCents'),
+      supplementPaidCents: read('supplementPaidCents'),
+      offlinePaidCents: read('offlinePaidCents'),
+    };
+  } catch {
+    return { onlinePaidBaselineCents: 0, supplementPaidCents: 0, offlinePaidCents: 0 };
+  }
+}
+
+export type ReservationPaidBalanceInput = {
+  paymentCapturedAt?: string | Date | null;
+  totalDueCents?: number | null;
+  payableOnlineCents: number;
+  grandTotalCents: number;
+  storeCreditAppliedCents?: number;
+  stripePaidCents?: number;
+  supplementPaidCents?: number;
+  onlinePaidBaselineCents?: number;
+  offlineDueCents?: number;
+  offlinePaidCents?: number;
+};
+
+export type ReservationPaidBalance = {
+  paidTotalCents: number;
+  paidOnlineCents: number;
+  outstandingOnlineDueCents: number;
+  remainingTotalCents: number;
+};
+
+/**
+ * Total encaissé (ligne + sur place), y compris extras hors ligne exclus du grand total
+ * document (ex. skipper réglé sur place mais hors CA « Total TTC » en ligne).
+ */
+export function resolveReservationCollectedTotalCents(input: {
+  grandTotalCents: number;
+  payableOnlineCents: number;
+  settledOnlineCents: number;
+  offlineDueCents: number;
+  offlinePaidCents: number;
+}): number {
+  const grand = Math.max(0, input.grandTotalCents);
+  const payable = Math.max(0, input.payableOnlineCents);
+  const settledOnline = Math.max(0, input.settledOnlineCents);
+  const offlineDue = Math.max(0, input.offlineDueCents);
+  const offlinePaid = Math.min(offlineDue, Math.max(0, input.offlinePaidCents));
+
+  const offlineInGrand = Math.max(0, Math.min(offlineDue, grand - payable));
+  const offlineOutsideGrand = Math.max(0, offlineDue - offlineInGrand);
+  const offlinePaidInGrand = Math.min(offlinePaid, offlineInGrand);
+  const offlinePaidOutsideGrand = Math.min(offlinePaid, offlineOutsideGrand);
+
+  return Math.min(grand, settledOnline + offlinePaidInGrand) + offlinePaidOutsideGrand;
+}
+
+/**
+ * Répartit payé / reste à payer pour une réservation encaissée.
+ * S'appuie sur les traces réelles (Stripe, baseline, suppléments) et totalDueCents (= supplément en attente).
+ */
+export function resolveReservationPaidBalance(input: ReservationPaidBalanceInput): ReservationPaidBalance {
+  const payable = Math.max(0, input.payableOnlineCents);
+  const grand = Math.max(0, input.grandTotalCents);
+  const credits = Math.max(0, input.storeCreditAppliedCents ?? 0);
+  const stripe = Math.max(0, input.stripePaidCents ?? 0);
+  const supplement = Math.max(0, input.supplementPaidCents ?? 0);
+  const baseline = Math.max(0, input.onlinePaidBaselineCents ?? 0);
+  const offlineDue = Math.max(0, input.offlineDueCents ?? 0);
+  const offlinePaid = Math.min(offlineDue, Math.max(0, input.offlinePaidCents ?? 0));
+  const storedDue = Math.max(0, input.totalDueCents ?? 0);
+
+  if (!hasCapturedOnlinePayment(input.paymentCapturedAt)) {
+    const outstandingOnline = Math.max(0, payable - credits);
+    const paidTotal = resolveReservationCollectedTotalCents({
+      grandTotalCents: grand,
+      payableOnlineCents: payable,
+      settledOnlineCents: 0,
+      offlineDueCents: offlineDue,
+      offlinePaidCents: offlinePaid,
+    });
+    return {
+      paidTotalCents: paidTotal,
+      paidOnlineCents: 0,
+      outstandingOnlineDueCents: outstandingOnline,
+      remainingTotalCents: Math.max(0, outstandingOnline + Math.max(0, offlineDue - offlinePaid)),
+    };
+  }
+
+  const cardPaid = Math.max(stripe, baseline) + supplement;
+  let settledOnline = credits + cardPaid;
+  let outstandingOnline: number;
+
+  if (storedDue >= 50 && storedDue < payable) {
+    outstandingOnline = storedDue;
+    settledOnline = Math.max(settledOnline, payable - storedDue);
+  } else if (cardPaid >= 50) {
+    outstandingOnline = Math.max(0, payable - settledOnline);
+  } else if (storedDue < 50) {
+    settledOnline = Math.max(settledOnline, payable);
+    outstandingOnline = 0;
+  } else {
+    outstandingOnline = Math.max(0, payable - settledOnline);
+  }
+
+  if (outstandingOnline < 50 && payable > settledOnline + 49) {
+    outstandingOnline = payable - settledOnline;
+  }
+  if (storedDue >= 50 && storedDue < payable) {
+    outstandingOnline = storedDue;
+    settledOnline = Math.max(settledOnline, payable - storedDue);
+  }
+
+  const paidOnlineCents = Math.max(0, settledOnline - credits);
+  const paidTotalCents = resolveReservationCollectedTotalCents({
+    grandTotalCents: grand,
+    payableOnlineCents: payable,
+    settledOnlineCents: settledOnline,
+    offlineDueCents: offlineDue,
+    offlinePaidCents: offlinePaid,
+  });
+  const offlineRemaining = Math.max(0, offlineDue - offlinePaid);
+  return {
+    paidTotalCents,
+    paidOnlineCents,
+    outstandingOnlineDueCents: outstandingOnline,
+    remainingTotalCents: outstandingOnline + offlineRemaining,
+  };
 }
 
 export type DocumentPaymentObligation = {

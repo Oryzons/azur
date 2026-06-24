@@ -88,6 +88,12 @@ export type ReservationWizardDetails = {
   refunds?: { id: string; amount: number; at: string; note?: string }[];
   cancelledAt?: string | null;
   status?: ReservationStatus;
+  /** Montant encaissé sur place (extras hors ligne), en centimes. */
+  offlinePaidCents?: number | null;
+  /** Suppléments encaissés après paiement initial (en ligne ou bureau), en centimes. */
+  supplementPaidCents?: number | null;
+  /** Montant CB initial encaissé (centimes), figé à la 1re capture. */
+  onlinePaidBaselineCents?: number | null;
 };
 
 export type ReservationWizardSubmitPayload = {

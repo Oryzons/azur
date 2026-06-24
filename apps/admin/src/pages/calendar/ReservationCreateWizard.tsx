@@ -23,6 +23,7 @@ import { useBoatPricingStore } from '@/stores/boatPricing';
 import { useBoatsStore } from '@/stores/boats';
 import { computeCatalogLocationEuros, mergeBoatFleetRates } from '@/lib/calendarRentalPricing';
 import { resolvePricingSeasonCode } from '@/lib/pricingSeasons';
+import { contractFieldsFromMember, mergeContractFieldsFromMember } from '@/lib/memberContractFields';
 import { searchMemberClients } from '@/lib/searchMemberClients';
 import { ensureReservationClient, reservationTitleFromDetails } from '@/lib/ensureReservationClient';
 import { clientDisplayNameFromDetails } from '@/pages/calendar/reservationWizardTypes';
@@ -123,6 +124,15 @@ export function ReservationCreateWizard(props: Readonly<{
   const clients = useMemo(() => members.filter((m): m is MemberClient => m.role === 'client'), [members]);
 
   useEffect(() => {
+    if (!membersHydrated) return;
+    const linkedId = details.linkedMemberId?.trim();
+    if (!linkedId) return;
+    const member = clients.find((c) => c.id === linkedId);
+    if (!member) return;
+    setDetails((d) => mergeContractFieldsFromMember(d, member));
+  }, [membersHydrated, clients, details.linkedMemberId]);
+
+  useEffect(() => {
     if (!reservationsHydrated) void refreshReservations();
   }, [reservationsHydrated, refreshReservations]);
 
@@ -219,6 +229,7 @@ export function ReservationCreateWizard(props: Readonly<{
       clientCity: m.city ?? '',
       clientCountry: m.country ?? 'France',
       airbusBadge: m.airbusBadge?.trim() ? m.airbusBadge.trim().toUpperCase() : '',
+      ...contractFieldsFromMember(m),
     }));
   }
 
@@ -332,9 +343,11 @@ export function ReservationCreateWizard(props: Readonly<{
         bookerName: title,
         details: finalDetails,
         totalDueCents:
-          pricingRecap.finalPrice != null && Number.isFinite(pricingRecap.finalPrice)
-            ? Math.round(pricingRecap.finalPrice * 100)
-            : null,
+          lockCatalogPricing && finalDetails.paymentCapturedAt
+            ? null
+            : pricingRecap.finalPrice != null && Number.isFinite(pricingRecap.finalPrice)
+              ? Math.round(pricingRecap.finalPrice * 100)
+              : null,
       });
       setSubmitting(false);
     })();

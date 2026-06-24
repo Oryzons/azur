@@ -98,7 +98,7 @@ export function FirstLoginPasswordForm({
 
       <div>
         <label htmlFor="first-login-current" className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-          Mot de passe actuel (fourni par Azur)
+          Mot de passe actuel (fourni par Azure)
         </label>
         <div className="relative mt-1.5">
           <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" strokeWidth={2} aria-hidden />

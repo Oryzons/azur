@@ -1,8 +1,8 @@
 import type { CheckFlowGuideKind } from '@/lib/checkFlowPhotoGuide';
 import { CheckFlowCameraOverlay } from '@/components/tablet/CheckFlowGuideIllustration';
+import { CF } from '@/lib/tabletCheckFlowTheme';
 import { useEffect, useRef, useState } from 'react';
 import { Camera, X } from 'lucide-react';
-import { TB } from '@/lib/tabletTheme';
 
 type Props = Readonly<{
   onPhoto: (file: File) => void;
@@ -81,16 +81,18 @@ export function TabletPhotoCapture({ onPhoto, disabled, guideKind, cameraHint }:
 
   if (open) {
     return (
-      <div className="fixed inset-0 z-50 flex flex-col bg-zinc-900">
+      <div className="fixed inset-0 z-50 flex flex-col bg-zinc-950">
         <div className="flex items-center justify-between gap-3 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))] text-white">
           <div className="min-w-0">
             <span className="block text-sm font-semibold">Prendre une photo</span>
-            {cameraHint ? <span className="mt-0.5 block truncate text-xs text-white/75">{cameraHint}</span> : null}
+            {cameraHint ? (
+              <span className="mt-0.5 block truncate text-xs text-white/70">{cameraHint}</span>
+            ) : null}
           </div>
           <button
             type="button"
             onClick={closeCamera}
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10 touch-manipulation"
             aria-label="Fermer"
           >
             <X className="h-5 w-5" />
@@ -99,18 +101,13 @@ export function TabletPhotoCapture({ onPhoto, disabled, guideKind, cameraHint }:
         <div className="relative min-h-0 flex-1 bg-black">
           <video ref={videoRef} playsInline muted className="h-full w-full object-cover" />
           {guideKind ? <CheckFlowCameraOverlay kind={guideKind} /> : null}
-          <div className="pointer-events-none absolute inset-8 rounded-2xl border-2 border-dashed border-white/70 cf-guide-pulse" />
-          <div className="pointer-events-none absolute inset-x-0 bottom-4 flex justify-center">
-            <span className="rounded-full bg-black/55 px-3 py-1 text-xs font-medium text-white/90">
-              Cadrez l’élément dans le rectangle
-            </span>
-          </div>
+          <div className="pointer-events-none absolute inset-8 rounded-3xl border-2 border-dashed border-white/60 cf-guide-pulse" />
         </div>
-        <div className="flex gap-3 border-t border-white/10 bg-zinc-900 p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-          <button type="button" onClick={closeCamera} className={`flex-1 ${TB.btnSecondary} !text-zinc-800`}>
+        <div className="flex gap-3 border-t border-white/10 bg-zinc-950 p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+          <button type="button" onClick={closeCamera} className={`flex-1 ${CF.btnSecondary}`}>
             Annuler
           </button>
-          <button type="button" onClick={capture} className={`flex-1 ${TB.btnPrimary}`}>
+          <button type="button" onClick={capture} className={`flex-1 ${CF.btnPrimary}`}>
             Capturer
           </button>
         </div>
@@ -125,15 +122,15 @@ export function TabletPhotoCapture({ onPhoto, disabled, guideKind, cameraHint }:
         disabled={disabled}
         onClick={() => void openCamera()}
         className={[
-          'flex w-full min-h-[4rem] items-center justify-center gap-2 rounded-2xl bg-gradient-to-br from-sky-600 to-sky-800 py-6 text-base font-bold text-white shadow-lg shadow-sky-900/25 touch-manipulation',
-          disabled ? 'opacity-50' : 'active:scale-[0.98]',
+          'flex w-full min-h-[3.75rem] items-center justify-center gap-2.5 rounded-full bg-zinc-900 py-4 text-sm font-semibold text-white shadow-lg shadow-zinc-900/15 touch-manipulation transition-transform active:scale-[0.98]',
+          disabled ? 'opacity-50' : '',
         ].join(' ')}
       >
         <Camera className="h-5 w-5" aria-hidden />
         Prendre une photo
       </button>
-      <p className="text-center text-[11px] text-zinc-500">Prise de vue directe uniquement (pas la galerie).</p>
-      {error ? <p className={TB.error}>{error}</p> : null}
+      <p className="text-center text-[11px] text-zinc-400">Prise de vue directe uniquement</p>
+      {error ? <p className={CF.error}>{error}</p> : null}
     </div>
   );
 }

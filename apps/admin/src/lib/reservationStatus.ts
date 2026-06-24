@@ -22,15 +22,41 @@ export const RESERVATION_STATUSES: { value: ReservationStatus; label: string }[]
   { value: 'partially_refunded', label: 'Remboursée partiellement' },
 ];
 
-/** Couleurs des blocs sur le calendrier (par statut visuel). */
+/**
+ * Palette calendrier — harmonisée avec la marque (#416B9F).
+ * Progression paiement : ambre → bleu → vert marin.
+ * Remboursements / annulation : ardoises et terre cuite (même saturation).
+ */
 export const CALENDAR_STATUS_COLORS = {
-  pending_payment: '#FDBA74',
-  reserved: '#2563EB',
-  partial_payment: '#D97706',
-  paid: '#16A34A',
-  cancelled: '#DC2626',
-  refunded: '#4F46E5',
-  partially_refunded: '#C026D3',
+  /** À régler — ambre doux (action requise). */
+  pending_payment: '#B8864A',
+  /** Confirmée, pas encore soldée — bleu marque. */
+  reserved: '#416B9F',
+  /** Acompte ou solde restant — teal bleuté (pont visible entre bleu et vert). */
+  partial_payment: '#3A8896',
+  /** Entièrement réglée — vert marin profond. */
+  paid: '#1A5F48',
+  /** Annulée — terre cuite atténuée. */
+  cancelled: '#946868',
+  /** Remboursée — ardoise (famille du bleu marque). */
+  refunded: '#506079',
+  /** Remboursement partiel — ardoise claire. */
+  partially_refunded: '#8A9BB5',
+} as const;
+
+/** Indisponibilité bateau (hors statut réservation). */
+export const CALENDAR_UNAVAILABILITY_COLORS = {
+  background: '#DDD5D5',
+  text: '#5C4E4E',
+} as const;
+
+/** Extra loué sans réservation bateau — ardoise violacée (proche du bleu marque). */
+export const CALENDAR_EXTRA_RENTAL_COLOR = '#5C6B8F';
+
+/** Contraste texte sur les pilules du calendrier. */
+export const CALENDAR_STATUS_TEXT_COLORS = {
+  partially_refunded: '#243044',
+  default: '#FFFFFF',
 } as const;
 
 export const CALENDAR_STATUS_LEGEND: { label: string; color: string }[] = [
@@ -43,10 +69,23 @@ export const CALENDAR_STATUS_LEGEND: { label: string; color: string }[] = [
   { label: 'Remb. partiel', color: CALENDAR_STATUS_COLORS.partially_refunded },
 ];
 
+/** Légende calendrier — espace propriétaire (sans détail statut paiement). */
+export const OWNER_CALENDAR_LEGEND: { label: string; color: string }[] = [
+  { label: 'Réservation client', color: CALENDAR_STATUS_COLORS.reserved },
+];
+
 export type ReservationPaymentVisualContext = {
   installmentPlan?: readonly InstallmentPlanItemView[];
   /** Extras / montants à régler sur place (centimes). */
   offlineDueCents?: number;
+  /** Part sur place déjà encaissée (centimes). */
+  offlinePaidCents?: number;
+  /** Supplément en ligne restant après paiement initial (centimes). */
+  outstandingOnlineDueCents?: number;
+  /** Lien Stripe actif (supplément ou solde). */
+  paymentLinkUrl?: string | null;
+  /** Reste à payer global (centimes). */
+  remainingTotalCents?: number;
 };
 
 const API_TO_STATUS: Record<string, ReservationStatus> = {
@@ -84,6 +123,10 @@ export function isReservationFullyPaid(
     paymentCapturedAt: details?.paymentCapturedAt,
     installmentPlan: ctx.installmentPlan,
     offlineDueCents: ctx.offlineDueCents,
+    offlinePaidCents: ctx.offlinePaidCents,
+    outstandingOnlineDueCents: ctx.outstandingOnlineDueCents,
+    paymentLinkUrl: ctx.paymentLinkUrl,
+    remainingTotalCents: ctx.remainingTotalCents,
   })) {
     return false;
   }
@@ -115,6 +158,10 @@ export function statusDisplayLabel(
       paymentCapturedAt: details?.paymentCapturedAt,
       installmentPlan: ctx.installmentPlan,
       offlineDueCents: ctx.offlineDueCents,
+      offlinePaidCents: ctx.offlinePaidCents,
+      outstandingOnlineDueCents: ctx.outstandingOnlineDueCents,
+      paymentLinkUrl: ctx.paymentLinkUrl,
+      remainingTotalCents: ctx.remainingTotalCents,
     });
     const plan = ctx.installmentPlan ?? [];
     if (isMultiInstallmentPlan(plan)) {
@@ -152,6 +199,10 @@ export function statusBadgeClass(
       paymentCapturedAt: details?.paymentCapturedAt,
       installmentPlan: ctx.installmentPlan,
       offlineDueCents: ctx.offlineDueCents,
+      offlinePaidCents: ctx.offlinePaidCents,
+      outstandingOnlineDueCents: ctx.outstandingOnlineDueCents,
+      paymentLinkUrl: ctx.paymentLinkUrl,
+      remainingTotalCents: ctx.remainingTotalCents,
     });
     const plan = ctx.installmentPlan ?? [];
     if (isMultiInstallmentPlan(plan)) {
@@ -190,15 +241,15 @@ export function resolveReservationStatus(
 ): ReservationStatus {
   const fromApi = statusFromApi(apiStatus);
   if (fromApi === 'refunded' || fromApi === 'partially_refunded') return fromApi;
-  if (fromApi === 'cancelled' || details?.status === 'cancelled' || details?.cancelledAt) {
-    return 'cancelled';
-  }
-  if (fromApi) return fromApi;
   if (details?.status === 'refunded' || details?.status === 'partially_refunded') {
     return details.status;
   }
   const refundStatus = details ? inferRefundStatus(details as ReservationWizardDetails) : null;
   if (refundStatus) return refundStatus;
+  if (fromApi === 'cancelled' || details?.status === 'cancelled' || details?.cancelledAt) {
+    return 'cancelled';
+  }
+  if (fromApi) return fromApi;
   if (details?.status) return details.status;
   if (details?.paymentCapturedAt) return 'reserved_paid';
   return 'pending_payment';
@@ -235,6 +286,10 @@ export function reservationPillColor(reservation: {
   details?: Partial<ReservationWizardDetails> | null;
   installmentPlan?: readonly InstallmentPlanItemView[];
   offlineDueCents?: number;
+  offlinePaidCents?: number;
+  outstandingOnlineDueCents?: number;
+  paymentLinkUrl?: string | null;
+  remainingTotalCents?: number;
 }): string {
   const details = reservation.details;
   const status = resolveReservationStatus(details);
@@ -253,6 +308,10 @@ export function reservationPillColor(reservation: {
         paymentCapturedAt: details?.paymentCapturedAt,
         installmentPlan: plan,
         offlineDueCents: reservation.offlineDueCents,
+        offlinePaidCents: reservation.offlinePaidCents,
+        outstandingOnlineDueCents: reservation.outstandingOnlineDueCents,
+        paymentLinkUrl: reservation.paymentLinkUrl,
+        remainingTotalCents: reservation.remainingTotalCents,
       });
       if (isMultiInstallmentPlan(plan)) {
         if (isInstallmentPlanFullyPaid(plan)) {
@@ -303,7 +362,20 @@ export function reservationTerminalVisualStatus(
   return isReservationTerminalVisualStatus(status) ? status : null;
 }
 
-/** Texte du bloc calendrier (clair sur fond orange pâle). */
+/** Texte du bloc calendrier (contraste lisible sur chaque fond). */
+export function calendarPillTextColor(background: string): string {
+  if (background === CALENDAR_STATUS_COLORS.partially_refunded) {
+    return CALENDAR_STATUS_TEXT_COLORS.partially_refunded;
+  }
+  if (background === CALENDAR_UNAVAILABILITY_COLORS.background) {
+    return CALENDAR_UNAVAILABILITY_COLORS.text;
+  }
+  return CALENDAR_STATUS_TEXT_COLORS.default;
+}
+
+/** @deprecated Préférer calendarPillTextColor(background) */
 export function reservationPillTextColor(details?: Partial<ReservationWizardDetails> | null): string {
-  return resolveReservationStatus(details) === 'pending_payment' ? '#9A3412' : '#FFFFFF';
+  const status = resolveReservationStatus(details);
+  if (status === 'pending_payment') return CALENDAR_STATUS_TEXT_COLORS.default;
+  return CALENDAR_STATUS_TEXT_COLORS.default;
 }

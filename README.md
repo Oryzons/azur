@@ -1,4 +1,4 @@
-# Azur — MVP (auth + dashboard)
+# Azure — MVP (auth + dashboard)
 
 ## Structure
 

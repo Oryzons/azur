@@ -1,5 +1,6 @@
 import type { Reservation } from '@/pages/calendar/reservationTypes';
 import { computeReservationPricingBreakdown } from '@/pages/finances/pricingTotals';
+import { buildReservationPaymentContext } from '@/lib/reservationOfflineDue';
 import { isReservationFullyPaid, resolveReservationStatus } from '@/lib/reservationStatus';
 import { resolveStoreCreditAppliedCents } from '@bleu-calanque/shared';
 import type { Coupon } from '@/stores/coupons';
@@ -41,7 +42,10 @@ export function computeReservationPricingDisplay(
       : null;
   const status = resolveReservationStatus(d);
   const isFullyPaid =
-    isReservationFullyPaid({ installmentPlan: reservation.installmentPlan }, d) ||
+    isReservationFullyPaid(
+      buildReservationPaymentContext(reservation, extrasCatalog, coupons, allReservations),
+      d,
+    ) ||
     status === 'refunded' ||
     status === 'partially_refunded';
   const hasAnyPayment =
@@ -71,7 +75,7 @@ export function computeReservationPricingDisplay(
 
   const computedFinal = breakdown.final;
   const computedPayableOnline = breakdown.payableOnline;
-  const totalTtcEuros = hasAnyPayment && storedTtc != null ? storedTtc + breakdown.extrasOffline : computedFinal;
+  const totalTtcEuros = computedFinal;
   // Le total en base peut être inférieur au recalcul (avoir client déduit) : ne pas alerter dans ce cas.
   const storedTotalMismatch =
     !hasAnyPayment &&
@@ -103,7 +107,7 @@ export function computeReservationPricingDisplay(
   const storeCreditAppliedCents = resolveStoreCreditAppliedCents(
     payableOnlineCents,
     storedDueCents,
-    null,
+    reservation.storeCreditAppliedCents ?? null,
   );
   const storeCreditAppliedEuros =
     storeCreditAppliedCents > 0 ? Math.round(storeCreditAppliedCents) / 100 : null;

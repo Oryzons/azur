@@ -43,6 +43,53 @@ export function addDays(d: Date, n: number) {
   return x;
 }
 
+/** Libellé période pour la barre calendrier (ex. « 01–07 janvier 2026 »). */
+export function formatCalendarToolbarPeriod(
+  view: ViewMode,
+  periodStart: Date,
+  periodEndExclusive: Date,
+  cursorDate?: Date,
+): string {
+  const start = startOfDay(periodStart);
+  const endInclusive = addDays(startOfDay(periodEndExclusive), -1);
+
+  if (view === 'day') {
+    const d = cursorDate ? startOfDay(cursorDate) : start;
+    return d.toLocaleDateString('fr-FR', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+    });
+  }
+
+  if (view === 'month') {
+    const d = startOfMonth(cursorDate ?? periodStart);
+    return d.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+  }
+
+  const sameMonth =
+    start.getMonth() === endInclusive.getMonth() && start.getFullYear() === endInclusive.getFullYear();
+
+  if (sameMonth) {
+    const monthYear = start.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+    return `${pad2(start.getDate())}–${pad2(endInclusive.getDate())} ${monthYear}`;
+  }
+
+  const startPart = start.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  const endPart = endInclusive.toLocaleDateString('fr-FR', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
+  return `${startPart} – ${endPart}`;
+}
+
+export function isTodayInCalendarPeriod(periodStart: Date, periodEndExclusive: Date): boolean {
+  const today = startOfDay(new Date());
+  return today >= startOfDay(periodStart) && today < startOfDay(periodEndExclusive);
+}
+
 export function startOfMonth(d: Date) {
   return new Date(d.getFullYear(), d.getMonth(), 1);
 }

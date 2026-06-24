@@ -1,6 +1,8 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import {
   computeTabletFlowAccess,
+  isReservationEligibleForCheckFlow,
+  type CheckFlowPaymentContext,
   type SubmitCheckFlowInput,
   type SyncCheckFlowQuestionsInput,
   submitCheckFlowSchema,
@@ -30,6 +32,37 @@ const submissionInclude = {
     },
   },
 } satisfies Prisma.CheckFlowSubmissionInclude;
+
+const tabletBoatSelect = {
+  id: true,
+  name: true,
+  brand: true,
+  model: true,
+  maxPassengers: true,
+  detailsJson: true,
+  photos: { orderBy: { sortOrder: 'asc' as const }, select: { url: true } },
+  announcements: {
+    where: {
+      status: 'ACTIVE' as const,
+      photos: { some: {} },
+    },
+    orderBy: { updatedAt: 'desc' as const },
+    take: 1,
+    select: {
+      photos: { orderBy: { sortOrder: 'asc' as const }, select: { url: true } },
+    },
+  },
+} as const;
+
+const tabletReservationPaymentSelect = {
+  status: true,
+  paymentCapturedAt: true,
+  cancelledAt: true,
+  installmentPlan: {
+    orderBy: { sequence: 'asc' as const },
+    select: { sequence: true, status: true, amountCents: true },
+  },
+} as const;
 
 const CHECK_FLOW_SETTINGS_ID = 'check_flow_settings';
 
@@ -213,10 +246,33 @@ export class CheckFlowService {
     return row;
   }
 
+  private tabletPaymentContext(row: {
+    status: string;
+    paymentCapturedAt: Date | null;
+    cancelledAt: Date | null;
+    installmentPlan: { sequence: number; status: string; amountCents: number }[];
+  }): CheckFlowPaymentContext {
+    return {
+      status: row.status,
+      cancelledAt: row.cancelledAt,
+      paymentCapturedAt: row.paymentCapturedAt,
+      installmentPlan: row.installmentPlan.map((p) => ({
+        sequence: p.sequence,
+        status: p.status,
+        amountCents: p.amountCents,
+      })),
+    };
+  }
+
   async getReservationStatus(reservationId: string) {
     const reservation = await this.prisma.reservation.findUnique({
       where: { id: reservationId },
-      select: { id: true, startAt: true, endAt: true },
+      select: {
+        id: true,
+        startAt: true,
+        endAt: true,
+        ...tabletReservationPaymentSelect,
+      },
     });
     if (!reservation) throw new NotFoundException('Réservation introuvable.');
 
@@ -226,18 +282,21 @@ export class CheckFlowService {
     });
     const checkIn = submissions.find((s) => s.kind === 'CHECK_IN') ?? null;
     const checkOut = submissions.find((s) => s.kind === 'CHECK_OUT') ?? null;
+    const payment = this.tabletPaymentContext(reservation);
 
     const checkInAccess = computeTabletFlowAccess({
       kind: 'CHECK_IN',
       reservationStartAt: reservation.startAt,
       reservationEndAt: reservation.endAt,
       submission: checkIn ? { id: checkIn.id, submittedAt: checkIn.submittedAt } : null,
+      payment,
     });
     const checkOutAccess = computeTabletFlowAccess({
       kind: 'CHECK_OUT',
       reservationStartAt: reservation.startAt,
       reservationEndAt: reservation.endAt,
       submission: checkOut ? { id: checkOut.id, submittedAt: checkOut.submittedAt } : null,
+      payment,
     });
 
     return { checkIn, checkOut, checkInAccess, checkOutAccess };
@@ -358,7 +417,13 @@ export class CheckFlowService {
 
     const reservation = await this.prisma.reservation.findUnique({
       where: { id: input.reservationId },
-      include: { boat: { select: { name: true } } },
+      select: {
+        startAt: true,
+        endAt: true,
+        title: true,
+        ...tabletReservationPaymentSelect,
+        boat: { select: { name: true } },
+      },
     });
     if (!reservation) throw new NotFoundException('Réservation introuvable.');
 
@@ -368,12 +433,20 @@ export class CheckFlowService {
       },
     });
 
+    const payment = this.tabletPaymentContext(reservation);
     const access = computeTabletFlowAccess({
       kind: input.kind,
       reservationStartAt: reservation.startAt,
       reservationEndAt: reservation.endAt,
       submission: existing ? { id: existing.id, submittedAt: existing.submittedAt } : null,
+      payment,
     });
+
+    if (access.mode === 'payment_required') {
+      throw new BadRequestException(
+        'Le check-in et le check-out ne sont disponibles que pour les réservations payées ou payées partiellement.',
+      );
+    }
 
     if (access.mode === 'view' || access.mode === 'done_today') {
       throw new ConflictException(
@@ -540,29 +613,118 @@ export class CheckFlowService {
     return submission;
   }
 
-  /** Réservations du jour pour la tablette agent. */
+  private isVisibleOnTabletAgentApp(row: {
+    status: string;
+    paymentCapturedAt: Date | null;
+    cancelledAt: Date | null;
+    installmentPlan: { sequence: number; status: string; amountCents: number }[];
+    checkFlowSubmissions: unknown[];
+  }): boolean {
+    if (isReservationEligibleForCheckFlow(this.tabletPaymentContext(row))) return true;
+    // Conserver une réservation déjà traitée (données antérieures à la règle paiement).
+    return row.checkFlowSubmissions.length > 0;
+  }
+
+  /** Réservations du jour pour la tablette agent (payées ou payées partiellement). */
   listTabletReservations(day: Date) {
     const start = new Date(day);
     start.setHours(0, 0, 0, 0);
     const end = new Date(day);
     end.setHours(23, 59, 59, 999);
 
-    return this.prisma.reservation.findMany({
-      where: {
-        OR: [
-          { startAt: { gte: start, lte: end } },
-          { endAt: { gte: start, lte: end } },
-          { AND: [{ startAt: { lte: start } }, { endAt: { gte: end } }] },
-        ],
-        status: { notIn: ['CANCELLED'] },
-      },
-      orderBy: { startAt: 'asc' },
+    return this.prisma.reservation
+      .findMany({
+        where: {
+          OR: [
+            { startAt: { gte: start, lte: end } },
+            { endAt: { gte: start, lte: end } },
+            { AND: [{ startAt: { lte: start } }, { endAt: { gte: end } }] },
+          ],
+          status: { notIn: ['CANCELLED'] },
+        },
+        orderBy: { startAt: 'asc' },
+        include: {
+          boat: { select: tabletBoatSelect },
+          checkFlowSubmissions: {
+            select: { id: true, kind: true, submittedAt: true, summaryJson: true },
+          },
+          installmentPlan: tabletReservationPaymentSelect.installmentPlan,
+        },
+      })
+      .then((rows) =>
+        rows
+          .filter((r) => this.isVisibleOnTabletAgentApp(r))
+          .map((r) => this.mapTabletReservationRow(r)),
+      );
+  }
+
+  async getTabletReservation(reservationId: string) {
+    const row = await this.prisma.reservation.findUnique({
+      where: { id: reservationId },
       include: {
-        boat: { select: { id: true, name: true, brand: true } },
+        boat: { select: tabletBoatSelect },
         checkFlowSubmissions: {
           select: { id: true, kind: true, submittedAt: true, summaryJson: true },
         },
+        installmentPlan: tabletReservationPaymentSelect.installmentPlan,
       },
     });
+    if (!row || !this.isVisibleOnTabletAgentApp(row)) {
+      throw new NotFoundException('Réservation introuvable.');
+    }
+    return this.mapTabletReservationRow(row);
+  }
+
+  private mapTabletReservationRow(
+    row: {
+      id: string;
+      title: string;
+      startAt: Date;
+      endAt: Date;
+      status: string;
+      paymentCapturedAt: Date | null;
+      cancelledAt: Date | null;
+      installmentPlan: { sequence: number; status: string; amountCents: number }[];
+      boat: {
+        id: string;
+        name: string;
+        brand: string;
+        model: string;
+        maxPassengers: number;
+        detailsJson: string | null;
+        photos: { url: string }[];
+        announcements?: Array<{ photos: { url: string }[] }>;
+      };
+      checkFlowSubmissions: Array<{
+        id: string;
+        kind: CheckFlowKind;
+        submittedAt: Date;
+        summaryJson: string | null;
+      }>;
+    },
+  ) {
+    const { photos, announcements, ...boatRest } = row.boat;
+    const boatUrls = photos.map((p) => p.url.trim()).filter(Boolean);
+    const announcementUrls =
+      announcements?.flatMap((a) => a.photos.map((p) => p.url.trim()).filter(Boolean)) ?? [];
+    return {
+      id: row.id,
+      title: row.title,
+      startAt: row.startAt,
+      endAt: row.endAt,
+      status: row.status,
+      paymentCapturedAt: row.paymentCapturedAt,
+      cancelledAt: row.cancelledAt,
+      installmentPlan: row.installmentPlan.map((p) => ({
+        sequence: p.sequence,
+        status: p.status,
+        amountCents: p.amountCents,
+      })),
+      boat: {
+        ...boatRest,
+        presentationPhotos: boatUrls.length > 0 ? boatUrls : announcementUrls,
+      },
+      checkFlowSubmissions: row.checkFlowSubmissions,
+    };
   }
 }

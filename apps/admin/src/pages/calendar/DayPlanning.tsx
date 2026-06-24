@@ -16,11 +16,17 @@ import {
   startOfDay,
 } from '@/pages/calendar/calendarConstants';
 import { ReservationPill } from '@/pages/calendar/ReservationPill';
+import {
+  allowReservationDragOver as allowReservationDragOverEvent,
+  readReservationDragId,
+} from '@/pages/calendar/calendarReservationDrag';
 import { UnavailabilityPill } from '@/components/calendar/UnavailabilityPill';
+import { ExtraRentalPill } from '@/components/calendar/ExtraRentalPill';
 import { isReservationLockedFromReservation } from '@/lib/reservationLock';
 import { unavailabilitiesForBoatPeriod } from '@/lib/planningUnavailability';
 import type { Reservation } from '@/pages/calendar/reservationTypes';
 import type { BoatUnavailability } from '@/stores/unavailabilities';
+import type { ExtraRental } from '@/stores/extraRentals';
 import { BoatCoverAvatar } from '@/components/media/BoatCoverAvatar';
 
 export function DayPlanning(props: Readonly<{
@@ -35,6 +41,8 @@ export function DayPlanning(props: Readonly<{
   onReorderBoatRows?: (fromIndex: number, toIndex: number) => void;
   unavailabilities?: BoatUnavailability[];
   onOpenUnavailability?: (item: BoatUnavailability) => void;
+  extraRentals?: ExtraRental[];
+  onOpenExtraRental?: (item: ExtraRental) => void;
   highlightDay?: Date;
 }>) {
   const {
@@ -49,13 +57,44 @@ export function DayPlanning(props: Readonly<{
     onReorderBoatRows,
     unavailabilities = [],
     onOpenUnavailability,
+    extraRentals = [],
+    onOpenExtraRental,
     highlightDay,
   } = props;
   const ro = Boolean(readOnly);
   const canReorderBoats = Boolean(onReorderBoatRows) && !ro;
 
   function updateReservation(id: string, patch: Partial<Reservation>) {
+    const target = reservations.find((r) => r.id === id);
+    if (target && isReservationLockedFromReservation(target)) return;
     onMove((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  }
+
+  function allowReservationDragOver(e: React.DragEvent) {
+    if (ro) return;
+    allowReservationDragOverEvent(e);
+  }
+
+  function handleReservationDropOnGrid(e: React.DragEvent, boat: { id: string }) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer.types.includes(CALENDAR_BOAT_ROW_DRAG_MIME)) return;
+    const id = readReservationDragId(e.dataTransfer);
+    if (!id) return;
+    const scrollHost = e.currentTarget.closest('.overflow-x-auto');
+    const scrollLeft = scrollHost?.scrollLeft ?? 0;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left + scrollLeft;
+    const slotIndex = clamp(Math.floor(x / SLOT_COL_W), 0, slots.cols - 1);
+    const minutes = slotIndex * slots.step;
+
+    const dragged = reservations.find((r) => r.id === id);
+    if (!dragged) return;
+    const durationMin = Math.max(15, Math.round((dragged.end.getTime() - dragged.start.getTime()) / 60000));
+
+    const newStart = new Date(start.getTime() + minutes * 60000);
+    const newEnd = new Date(newStart.getTime() + durationMin * 60000);
+    updateReservation(id, { boatId: boat.id, start: newStart, end: newEnd });
   }
 
   const start = useMemo(() => {
@@ -119,6 +158,39 @@ export function DayPlanning(props: Readonly<{
           </div>
 
           <div className="divide-y divide-zinc-200/80">
+            {!ownerMinimal && extraRentals.length > 0 ? (
+              <div className="flex">
+                <div
+                  className="sticky left-0 z-20 flex shrink-0 items-center border-r border-zinc-200/90 bg-violet-50 px-4 shadow-[4px_0_12px_-4px_rgba(0,0,0,0.06)]"
+                  style={{ width: BOAT_COL_W, minHeight: 44 }}
+                >
+                  <span className="text-xs font-bold text-violet-900">Extras</span>
+                </div>
+                <div className="relative min-h-[44px] flex-1">
+                  {extraRentals.map((r) => {
+                    const rStart = new Date(r.startAt);
+                    const rEnd = new Date(r.endAt);
+                    const startMin = clamp((rStart.getTime() - start.getTime()) / 60000, 0, slots.totalMin);
+                    const endMin = clamp((rEnd.getTime() - start.getTime()) / 60000, 0, slots.totalMin);
+                    const colStart = Math.floor(startMin / slots.step);
+                    const colEnd = Math.max(colStart + 1, Math.ceil(endMin / slots.step));
+                    const left = colStart * SLOT_COL_W;
+                    const width = (colEnd - colStart) * SLOT_COL_W;
+                    return (
+                      <div key={r.id} className="absolute top-1 px-px" style={{ left, width, height: 32 }}>
+                        <ExtraRentalPill
+                          item={r}
+                          label={r.extra?.name ?? r.title}
+                          height={32}
+                          onClick={onOpenExtraRental ? () => onOpenExtraRental(r) : undefined}
+                          className="flex h-full w-full min-w-0 items-center rounded-lg px-2 text-left text-[11px] font-semibold shadow-sm"
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
             {boats.map((boat, rowIndex) => {
               const rowRes = reservations.filter(
                 (r) => r.boatId === boat.id && overlaps(r.start, r.end, periodStart, periodEnd),
@@ -239,36 +311,8 @@ export function DayPlanning(props: Readonly<{
                   >
                     <section
                       className="absolute inset-0"
-                      onDragOver={ro ? undefined : (e) => e.preventDefault()}
-                      onDrop={
-                        ro
-                          ? undefined
-                          : (e) => {
-                              if (e.dataTransfer.types.includes(CALENDAR_BOAT_ROW_DRAG_MIME)) {
-                                e.preventDefault();
-                                return;
-                              }
-                              const id = e.dataTransfer.getData('text/reservationId');
-                              if (!id) return;
-                              const scrollHost = e.currentTarget.closest('.overflow-auto');
-                              const scrollLeft = scrollHost?.scrollLeft ?? 0;
-                              const rect = e.currentTarget.getBoundingClientRect();
-                              const x = e.clientX - rect.left + scrollLeft;
-                              const slotIndex = clamp(Math.floor(x / SLOT_COL_W), 0, slots.cols - 1);
-                              const minutes = slotIndex * slots.step;
-
-                              const dragged = reservations.find((r) => r.id === id);
-                              if (!dragged) return;
-                              const durationMin = Math.max(
-                                15,
-                                Math.round((dragged.end.getTime() - dragged.start.getTime()) / 60000),
-                              );
-
-                              const newStart = new Date(start.getTime() + minutes * 60000);
-                              const newEnd = new Date(newStart.getTime() + durationMin * 60000);
-                              updateReservation(id, { boatId: boat.id, start: newStart, end: newEnd });
-                            }
-                      }
+                      onDragOver={ro ? undefined : allowReservationDragOver}
+                      onDrop={ro ? undefined : (e) => handleReservationDropOnGrid(e, boat)}
                       aria-label={`Planning ${boat.name}`}
                     >
                       <div
@@ -281,7 +325,7 @@ export function DayPlanning(props: Readonly<{
                       </div>
                     </section>
 
-                    <div className="absolute inset-0 overflow-hidden">
+                    <div className="pointer-events-none absolute inset-0 overflow-hidden">
                       <div className="relative h-full" style={{ width: slots.cols * SLOT_COL_W }}>
                         {rowSegs.map((seg, i) => {
                           const lane = laneInfo.laneByIndex[i] ?? 0;
@@ -297,7 +341,7 @@ export function DayPlanning(props: Readonly<{
                             return (
                               <div
                                 key={seg.id}
-                                className="absolute min-w-0"
+                                className="pointer-events-auto absolute min-w-0"
                                 style={{ left, width, top, height: barH }}
                               >
                                 <ReservationPill
@@ -306,7 +350,7 @@ export function DayPlanning(props: Readonly<{
                                   height={barH}
                                   draggable={!ro && !isReservationLockedFromReservation(r)}
                                   minimal={ownerMinimal}
-                                  neutralStyle={ownerMinimal}
+                                  onMoveDrop={!ro ? (e) => handleReservationDropOnGrid(e, boat) : undefined}
                                   onClick={onOpenReservation ? () => onOpenReservation(r.id) : undefined}
                                   className="pointer-events-auto flex h-full w-full min-w-0 rounded-lg px-2 text-left text-[11px] font-semibold text-white shadow-sm"
                                 />

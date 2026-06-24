@@ -21,7 +21,7 @@ export function TabletReservationsPage() {
           type="button"
           onClick={() => void reload()}
           disabled={loading}
-          className={TB.iconBtn}
+          className={TB.iconBtnRound}
           aria-label="Actualiser"
         >
           <RefreshCw className={`h-5 w-5 ${loading ? 'animate-spin' : ''}`} />

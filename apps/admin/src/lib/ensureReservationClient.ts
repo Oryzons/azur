@@ -1,3 +1,4 @@
+import { mergeContractFieldsFromMember } from '@/lib/memberContractFields';
 import { birthDateDisplayToIso } from '@/pages/calendar/ReservationWizardSteps';
 import type { ReservationWizardDetails } from '@/pages/calendar/reservationWizardTypes';
 import { clientDisplayNameFromDetails } from '@/pages/calendar/reservationWizardTypes';
@@ -54,15 +55,18 @@ export async function ensureReservationClient(
   const existing = findClientByEmail(clients, email);
   if (existing) {
     return {
-      details: {
-        ...details,
-        linkedMemberId: existing.id,
-        clientType: existing.clientType,
-        civility: existing.civility,
-        clientFirstName: existing.firstName,
-        clientLastName: existing.lastName,
-        clientPhone: existing.phone ? String(existing.phone) : details.clientPhone,
-      },
+      details: mergeContractFieldsFromMember(
+        {
+          ...details,
+          linkedMemberId: existing.id,
+          clientType: existing.clientType,
+          civility: existing.civility,
+          clientFirstName: existing.firstName,
+          clientLastName: existing.lastName,
+          clientPhone: existing.phone ? String(existing.phone) : details.clientPhone,
+        },
+        existing,
+      ),
     };
   }
 

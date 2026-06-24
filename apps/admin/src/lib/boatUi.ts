@@ -11,7 +11,7 @@ export function boatSearchHaystack(
   ownerLabel: string,
 ): string {
   const typeLabel = boatTypeLabel(b.boatType);
-  return `${b.name} ${b.brand} ${b.model} ${typeLabel} ${fleetName} ${ownerLabel}`.toLowerCase();
+  return `${b.name} ${b.brand} ${b.model} ${typeLabel} ${fleetName} ${ownerLabel} ${b.details.generales.emplacement}`.toLowerCase();
 }
 
 export function formatDepositEuros(depositEuros: number): string {

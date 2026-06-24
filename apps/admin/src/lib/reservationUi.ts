@@ -1,5 +1,6 @@
 import type { Reservation } from '@/pages/calendar/reservationTypes';
-import { reservationPaymentContext } from '@/lib/reservationOfflineDue';
+import { buildReservationPaymentContext } from '@/lib/reservationOfflineDue';
+import type { Coupon } from '@/stores/coupons';
 import type { Extra } from '@/stores/extras';
 import type { Boat } from '@/stores/boats';
 import { BOAT_TYPES_UI } from '@/stores/boats';
@@ -65,10 +66,19 @@ export function reservationStatusForList(r: Reservation): ReservationStatus {
 export function reservationStatusBadge(
   r: Reservation,
   extrasCatalog?: readonly Extra[],
+  pricingDeps?: {
+    coupons?: readonly Coupon[];
+    allReservations?: readonly Reservation[];
+  },
 ): { label: string; className: string } {
   const status = reservationStatusForList(r);
   const ctx = extrasCatalog
-    ? reservationPaymentContext(r, extrasCatalog)
+    ? buildReservationPaymentContext(
+        r,
+        extrasCatalog,
+        pricingDeps?.coupons ?? [],
+        pricingDeps?.allReservations ?? [],
+      )
     : { installmentPlan: r.installmentPlan };
   return {
     label: statusDisplayLabel(status, r.details, ctx),
@@ -80,6 +90,11 @@ export function matchesReservationListFilter(
   r: Reservation,
   filter: ReservationListFilter,
   now = new Date(),
+  extrasCatalog?: readonly Extra[],
+  pricingDeps?: {
+    coupons?: readonly Coupon[];
+    allReservations?: readonly Reservation[];
+  },
 ): boolean {
   const status = reservationStatusForList(r);
   const upcoming = r.end.getTime() >= now.getTime();
@@ -97,7 +112,17 @@ export function matchesReservationListFilter(
     case 'paid':
       return (
         status === 'reserved_paid' &&
-        isReservationFullyPaid({ installmentPlan: r.installmentPlan }, r.details)
+        isReservationFullyPaid(
+          extrasCatalog
+            ? buildReservationPaymentContext(
+                r,
+                extrasCatalog,
+                pricingDeps?.coupons ?? [],
+                pricingDeps?.allReservations ?? [],
+              )
+            : { installmentPlan: r.installmentPlan },
+          r.details,
+        )
       );
     case 'cancelled':
       return isReservationCancelled(r.details) || status === 'cancelled';

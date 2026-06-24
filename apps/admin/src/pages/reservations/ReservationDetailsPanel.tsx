@@ -43,7 +43,10 @@ import { ReservationResolutionPanel } from '@/components/reservations/Reservatio
 import { CancelReservationDialog } from '@/components/ui/CancelReservationDialog';
 import { startOfDay } from '@/pages/calendar/calendarConstants';
 import { BOAT_TYPES_UI, type Boat, type Fleet } from '@/stores/boats';
-import { reservationPaymentContext } from '@/lib/reservationOfflineDue';
+import { computeReservationOfflineDueCents, buildReservationPaymentContext } from '@/lib/reservationOfflineDue';
+import { computeReservationPaymentBalance, resolveStripePaidCents } from '@/lib/reservationPaymentBalance';
+import { dismissGuide, isGuideDismissed } from '@/lib/dismissedGuides';
+import { computeReservationPricingBreakdown } from '@/pages/finances/pricingTotals';
 import { useExtrasStore } from '@/stores/extras';
 import { useCouponsStore } from '@/stores/coupons';
 import { computeReservationPricingDisplay } from '@/lib/reservationPricingDisplay';
@@ -53,7 +56,7 @@ import { RentalContractStatusBadge } from '@/components/reservations/RentalContr
 import { deserializeReservation, useReservationsStore } from '@/stores/reservations';
 import { useNotificationsStore } from '@/stores/notifications';
 import { api } from '@/lib/api';
-import { paymentMethodLabel } from '@bleu-calanque/shared';
+import { boatLicenseTypeLabel, paymentMethodLabel, type PaymentMethod } from '@bleu-calanque/shared';
 import { extractApiErrorMessage } from '@/lib/apiError';
 import { filenameFromContentDisposition, openPdfBlobInNewTab } from '@/lib/openPdfBlob';
 import type { Reservation } from '@/pages/calendar/reservationTypes';
@@ -69,6 +72,7 @@ import {
   statusBadgeClass,
   statusDisplayLabel,
   syncStatusFields,
+  type ReservationPaymentVisualContext,
   type ReservationStatus,
 } from '@/lib/reservationStatus';
 import {
@@ -192,7 +196,7 @@ function ClientBlockPresent(props: Readonly<{
           icon={Tag}
           label="Permis bateau"
           value={[
-            d.licenseType?.trim(),
+            d.licenseType?.trim() ? boatLicenseTypeLabel(d.licenseType) || d.licenseType.trim() : '',
             d.licenseNumber?.trim(),
             d.licenseCountry?.trim(),
             d.licenseYear?.trim() ? `(${d.licenseYear.trim()})` : '',
@@ -252,6 +256,218 @@ function ReservationBlockPresent(props: Readonly<{ reservation: Reservation; det
         />
       ) : null}
     </SectionCard>
+  );
+}
+
+function OfflineSettlementRows(props: Readonly<{
+  reservation: Reservation;
+  amountCents: number;
+  locked?: boolean;
+}>) {
+  const { reservation, amountCents, locked } = props;
+  const refreshReservations = useReservationsStore((s) => s.refresh);
+  const [method, setMethod] = useState<PaymentMethod>('CASH');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const offlineMethods: PaymentMethod[] = ['CARD_ONSITE', 'CASH'];
+
+  if (amountCents < 50) return null;
+
+  async function settle(paid: boolean) {
+    setBusy(true);
+    setError('');
+    try {
+      await api.post(`/reservations/${reservation.id}/offline/settle`, { paid, method });
+      await refreshReservations();
+    } catch {
+      setError('Action impossible. Réessayez.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-2 rounded-xl border border-sky-200/80 bg-sky-50/50 px-3 py-2.5">
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-sky-900">
+        Extras sur place · {fmtEurosFromCents(amountCents)}
+      </p>
+      {error ? <p className="text-xs font-medium text-red-700">{error}</p> : null}
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="text-[11px] font-semibold text-zinc-600" htmlFor={`offline-method-${reservation.id}`}>
+          Mode de règlement
+        </label>
+        <select
+          id={`offline-method-${reservation.id}`}
+          value={method}
+          disabled={locked || busy}
+          onChange={(e) => setMethod(e.target.value as PaymentMethod)}
+          className="rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-zinc-900 outline-none focus:border-[#416B9F]/60"
+        >
+          {offlineMethods.map((m) => (
+            <option key={m} value={m}>
+              {paymentMethodLabel(m)}
+            </option>
+          ))}
+        </select>
+      </div>
+      {!locked ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => settle(true)}
+            className="rounded-lg bg-[#416B9F] px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-[#365b87] disabled:opacity-50"
+          >
+            {busy ? '…' : 'Marquer réglé'}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => settle(false)}
+            className="rounded-lg px-2.5 py-1 text-[11px] font-semibold text-zinc-600 transition hover:bg-zinc-100 disabled:opacity-50"
+          >
+            Marquer non réglé
+          </button>
+        </div>
+      ) : null}
+      <p className="text-[10px] leading-relaxed text-zinc-600">
+        Extras à régler le jour J (CB TPE ou espèces). Le montant est comptabilisé dans « Payé » une fois encaissé.
+      </p>
+    </div>
+  );
+}
+
+function SupplementSettlementRows(props: Readonly<{
+  reservation: Reservation;
+  amountCents: number;
+  paymentLinkUrl?: string | null;
+  locked?: boolean;
+}>) {
+  const { reservation, amountCents, paymentLinkUrl, locked } = props;
+  const refreshReservations = useReservationsStore((s) => s.refresh);
+  const [method, setMethod] = useState<PaymentMethod>('ONLINE');
+  const [busy, setBusy] = useState<'settle' | 'email' | null>(null);
+  const [error, setError] = useState('');
+  const [linkUrl, setLinkUrl] = useState<string | null>(paymentLinkUrl ?? null);
+  const supplementMethods: PaymentMethod[] = ['ONLINE', 'CARD_ONSITE', 'CASH', 'TRANSFER'];
+
+  if (amountCents < 50) return null;
+
+  async function settle(paid: boolean) {
+    setBusy('settle');
+    setError('');
+    try {
+      const { data } = await api.post<{ paymentLinkUrl?: string | null }>(
+        `/reservations/${reservation.id}/supplement/settle`,
+        { paid, method },
+      );
+      if (data?.paymentLinkUrl) setLinkUrl(data.paymentLinkUrl);
+      await refreshReservations();
+    } catch {
+      setError('Action impossible. Réessayez.');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function sendPaymentEmail() {
+    setBusy('email');
+    setError('');
+    try {
+      const { data } = await api.post<{ paymentLinkUrl?: string | null; sent?: boolean }>(
+        `/reservations/${reservation.id}/supplement/send-payment-email`,
+      );
+      if (data?.paymentLinkUrl) setLinkUrl(data.paymentLinkUrl);
+      await refreshReservations();
+    } catch {
+      setError('Envoi impossible. Vérifiez l’email client et Stripe.');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const activeLink = linkUrl ?? paymentLinkUrl;
+
+  return (
+    <div className="space-y-2 rounded-xl border border-amber-200/80 bg-amber-50/50 px-3 py-2.5">
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-900">
+        Supplément · {fmtEurosFromCents(amountCents)}
+      </p>
+      {error ? <p className="text-xs font-medium text-red-700">{error}</p> : null}
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="text-[11px] font-semibold text-zinc-600" htmlFor={`supplement-method-${reservation.id}`}>
+          Mode de règlement
+        </label>
+        <select
+          id={`supplement-method-${reservation.id}`}
+          value={method}
+          disabled={locked || busy != null}
+          onChange={(e) => setMethod(e.target.value as PaymentMethod)}
+          className="rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-zinc-900 outline-none focus:border-[#416B9F]/60"
+        >
+          {supplementMethods.map((m) => (
+            <option key={m} value={m}>
+              {paymentMethodLabel(m)}
+            </option>
+          ))}
+        </select>
+      </div>
+      {!locked ? (
+        <div className="flex flex-wrap items-center gap-2">
+          {method === 'ONLINE' ? (
+            <>
+              <button
+                type="button"
+                disabled={busy != null}
+                onClick={() => settle(true)}
+                className="rounded-lg bg-[#416B9F] px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-[#365b87] disabled:opacity-50"
+              >
+                {busy === 'settle' ? '…' : 'Générer lien CB'}
+              </button>
+              <button
+                type="button"
+                disabled={busy != null}
+                onClick={() => sendPaymentEmail()}
+                className="rounded-lg border border-[#416B9F]/30 bg-white px-2.5 py-1 text-[11px] font-semibold text-[#416B9F] transition hover:bg-[#416B9F]/10 disabled:opacity-50"
+              >
+                {busy === 'email' ? '…' : 'Envoyer lien par email'}
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              disabled={busy != null}
+              onClick={() => settle(true)}
+              className="rounded-lg bg-[#416B9F] px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-[#365b87] disabled:opacity-50"
+            >
+              {busy === 'settle' ? '…' : 'Marquer réglé'}
+            </button>
+          )}
+          <button
+            type="button"
+            disabled={busy != null}
+            onClick={() => settle(false)}
+            className="rounded-lg px-2.5 py-1 text-[11px] font-semibold text-zinc-600 transition hover:bg-zinc-100 disabled:opacity-50"
+          >
+            Marquer non réglé
+          </button>
+          {activeLink ? (
+            <a
+              href={activeLink}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-lg px-2.5 py-1 text-[11px] font-semibold text-[#416B9F] hover:bg-[#416B9F]/10"
+            >
+              Ouvrir lien CB
+            </a>
+          ) : null}
+        </div>
+      ) : null}
+      <p className="text-[10px] leading-relaxed text-zinc-600">
+        Montant ajouté après paiement initial (extra, remise annulée…). Il apparaît dans « Reste à payer », pas dans
+        « Payé », jusqu’à encaissement. Le contrat signé est actualisé automatiquement.
+      </p>
+    </div>
   );
 }
 
@@ -361,7 +577,57 @@ function PricingBlockPresent(
       computeReservationPricingDisplay(props.reservation, extrasCatalog, couponsCatalog, allReservations),
     [allReservations, props.reservation, extrasCatalog, couponsCatalog],
   );
-  const payment = d.paymentChannel === 'online' ? 'En ligne' : 'Hors ligne';
+  const pricingBreakdown = useMemo(
+    () => computeReservationPricingBreakdown(props.reservation, [...extrasCatalog], [...couponsCatalog], allReservations),
+    [allReservations, props.reservation, extrasCatalog, couponsCatalog],
+  );
+  const payableOnlineCents = pricingBreakdown.ok ? Math.round(pricingBreakdown.payableOnline * 100) : 0;
+  const grandTotalCents = pricingBreakdown.ok ? Math.round(pricingBreakdown.final * 100) : 0;
+  const storeCreditAppliedCents =
+    props.reservation.storeCreditAppliedCents ??
+    (pricing.storeCreditAppliedEuros != null ? Math.round(pricing.storeCreditAppliedEuros * 100) : 0);
+  const stripePaidCents = resolveStripePaidCents(props.reservation);
+  const offlineDueCents = computeReservationOfflineDueCents(props.reservation, extrasCatalog);
+  const offlinePaidCents = Math.max(0, Number(d.offlinePaidCents) || 0);
+  const supplementPaidCents = Math.max(0, Number(d.supplementPaidCents) || 0);
+  const onlinePaidBaselineCents = Math.max(0, Number(d.onlinePaidBaselineCents) || 0);
+  const offlineRemainingCents = Math.max(0, offlineDueCents - offlinePaidCents);
+  const paymentBalance = useMemo(
+    () =>
+      computeReservationPaymentBalance({
+        paymentCapturedAt: d.paymentCapturedAt,
+        totalDueCents: props.reservation.totalDueCents,
+        installmentPlan: props.reservation.installmentPlan,
+        grandTotalCents,
+        payableOnlineCents,
+        storeCreditAppliedCents,
+        stripePaidCents,
+        supplementPaidCents,
+        onlinePaidBaselineCents,
+        offlineDueCents,
+        offlinePaidCents,
+      }),
+    [
+      d.paymentCapturedAt,
+      d.offlinePaidCents,
+      d.supplementPaidCents,
+      d.onlinePaidBaselineCents,
+      props.reservation.totalDueCents,
+      props.reservation.installmentPlan,
+      grandTotalCents,
+      payableOnlineCents,
+      storeCreditAppliedCents,
+      stripePaidCents,
+      offlineDueCents,
+      offlinePaidCents,
+    ],
+  );
+  const paymentCtx = useMemo(
+    () => buildReservationPaymentContext(props.reservation, extrasCatalog, couponsCatalog, allReservations),
+    [allReservations, props.reservation, extrasCatalog, couponsCatalog],
+  );
+  const depositDismissKey = `deposit-hold-missing:${props.reservation.id}`;
+  const [depositBannerDismissed, setDepositBannerDismissed] = useState(() => isGuideDismissed(depositDismissKey));
   const rentalPrice =
     pricing.rentalBrutEuros != null ? `${pricing.rentalBrutEuros.toFixed(2).replace('.', ',')} €` : '—';
   const manual = d.discountPercent?.trim() ? `${d.discountPercent}%` : '—';
@@ -374,7 +640,6 @@ function PricingBlockPresent(
   const refundsTotal = Math.round(refunds.reduce((sum, r) => sum + Number(r.amount || 0), 0) * 100) / 100;
   const cancelled = d.cancelledAt ? new Date(d.cancelledAt).toLocaleString('fr-FR') : null;
   const status = resolveReservationStatus(d);
-  const paymentCtx = reservationPaymentContext(props.reservation, extrasCatalog);
   const isOnline = d.paymentChannel === 'online';
   const isFullyPaid = isReservationFullyPaid(paymentCtx, d);
   const hasAnyPayment = isFullyPaid || Boolean(d.paymentCapturedAt) || status === 'reserved_paid';
@@ -382,6 +647,7 @@ function PricingBlockPresent(
   const hasDeposit = Boolean(d.depositAmount?.trim());
   const depositHoldPlaced = Boolean(props.stripeDepositPaymentIntentId);
   const depositHoldMissing = isOnline && isPaid && hasDeposit && !depositHoldPlaced;
+  const payment = d.paymentChannel === 'online' ? 'En ligne' : 'Hors ligne';
 
   let depositBanner: ReactNode = null;
   if (depositHoldPlaced) {
@@ -393,12 +659,17 @@ function PricingBlockPresent(
         detail="Autorisation bancaire sans débit — la caution peut être capturée plus tard si besoin."
       />
     );
-  } else if (depositHoldMissing) {
+  } else if (depositHoldMissing && !depositBannerDismissed) {
     depositBanner = (
       <StatusBanner
         tone="danger"
         icon={ShieldAlert}
         trailingIcon={X}
+        onDismiss={() => {
+          dismissGuide(depositDismissKey);
+          setDepositBannerDismissed(true);
+        }}
+        dismissLabel="Masquer l’alerte caution"
         title="Empreinte caution non retenue"
         detail="Paiement reçu mais blocage caution absent (fréquent avec Apple Pay). Utilisez « Sync. Stripe » ou une carte classique."
       />
@@ -487,48 +758,32 @@ function PricingBlockPresent(
         </div>
 
         {(() => {
-          const totalCents =
-            pricing.totalTtcEuros != null
-              ? Math.round(pricing.totalTtcEuros * 100)
-              : props.reservation.totalDueCents != null
-                ? props.reservation.totalDueCents
-                : null;
+          const { paidTotalCents, remainingTotalCents, outstandingOnlineDueCents } = paymentBalance;
+          const showRemaining = remainingTotalCents > 0;
 
-          const offlineDueCents = Math.max(0, paymentCtx.offlineDueCents ?? 0);
-          const onlineTotalCents = totalCents != null ? Math.max(0, totalCents - offlineDueCents) : null;
+          if (grandTotalCents === 0 && paidTotalCents === 0 && remainingTotalCents === 0) {
+            return null;
+          }
 
-          const plan = props.reservation.installmentPlan ?? [];
-          const paidFromPlanCents =
-            plan.length > 0
-              ? plan.reduce((sum, p) => sum + (p.status === 'PAID' ? (p.amountCents ?? 0) : 0), 0)
-              : null;
-          const paidOnlineCents =
-            paidFromPlanCents != null
-              ? paidFromPlanCents
-              : props.reservation.totalDueCents != null
-                ? props.reservation.totalDueCents
-                : d.paymentCapturedAt && onlineTotalCents != null
-                  ? onlineTotalCents
-                  : null;
-
-          if (totalCents == null && paidOnlineCents == null && offlineDueCents === 0) return null;
-
-          const onlineRemainingCents =
-            onlineTotalCents != null && paidOnlineCents != null
-              ? Math.max(0, onlineTotalCents - paidOnlineCents)
-              : onlineTotalCents != null
-                ? onlineTotalCents
-                : null;
-          const remainingCents =
-            onlineRemainingCents != null ? onlineRemainingCents + offlineDueCents : offlineDueCents > 0 ? offlineDueCents : null;
-          const showRemaining = remainingCents != null && remainingCents > 0;
           return (
             <div className="grid grid-cols-2 gap-2">
               <div className="rounded-xl border border-emerald-200/70 bg-emerald-50/60 px-3 py-2">
                 <p className="text-[10px] font-semibold uppercase text-emerald-800">Payé</p>
-                <p className="mt-0.5 text-sm font-bold text-zinc-900">{fmtEurosFromCents(paidOnlineCents)}</p>
-                {offlineDueCents > 0 ? (
-                  <p className="mt-0.5 text-[10px] font-medium text-emerald-800/80">En ligne uniquement</p>
+                <p className="mt-0.5 text-sm font-bold text-zinc-900">{fmtEurosFromCents(paidTotalCents)}</p>
+                {storeCreditAppliedCents > 0 ? (
+                  <p className="mt-0.5 text-[10px] font-medium text-emerald-800/80">
+                    Dont {fmtEurosFromCents(storeCreditAppliedCents)} avoir client
+                  </p>
+                ) : null}
+                {stripePaidCents > 0 ? (
+                  <p className="mt-0.5 text-[10px] font-medium text-emerald-800/80">
+                    Dont {fmtEurosFromCents(stripePaidCents)} CB en ligne
+                  </p>
+                ) : null}
+                {offlinePaidCents > 0 ? (
+                  <p className="mt-0.5 text-[10px] font-medium text-emerald-800/80">
+                    Dont {fmtEurosFromCents(offlinePaidCents)} sur place
+                  </p>
                 ) : null}
               </div>
               <div
@@ -545,10 +800,15 @@ function PricingBlockPresent(
                 >
                   Reste à payer
                 </p>
-                <p className="mt-0.5 text-sm font-bold text-zinc-900">{fmtEurosFromCents(remainingCents)}</p>
-                {offlineDueCents > 0 ? (
+                <p className="mt-0.5 text-sm font-bold text-zinc-900">{fmtEurosFromCents(remainingTotalCents)}</p>
+                {offlineRemainingCents >= 50 && remainingTotalCents > 0 ? (
                   <p className="mt-0.5 text-[10px] font-medium text-amber-800/80">
-                    Dont {fmtEurosFromCents(offlineDueCents)} à régler sur place
+                    Dont {fmtEurosFromCents(Math.min(offlineRemainingCents, remainingTotalCents))} à régler sur place
+                  </p>
+                ) : null}
+                {outstandingOnlineDueCents >= 50 && remainingTotalCents > 0 ? (
+                  <p className="mt-0.5 text-[10px] font-medium text-amber-800/80">
+                    Dont {fmtEurosFromCents(outstandingOnlineDueCents)} en ligne
                   </p>
                 ) : null}
               </div>
@@ -568,6 +828,23 @@ function PricingBlockPresent(
         <InfoRow icon={Calendar} label="Échéances" value={`${d.installments} fois`} />
         {props.reservation.installmentPlan && props.reservation.installmentPlan.length >= 2 ? (
           <InstallmentPlanRows reservation={props.reservation} locked={props.locked} />
+        ) : null}
+        {(props.reservation.installmentPlan?.length ?? 0) < 2 &&
+        d.paymentCapturedAt &&
+        paymentBalance.outstandingOnlineDueCents >= 50 ? (
+          <SupplementSettlementRows
+            reservation={props.reservation}
+            amountCents={paymentBalance.outstandingOnlineDueCents}
+            paymentLinkUrl={props.reservation.paymentLinkUrl}
+            locked={props.locked}
+          />
+        ) : null}
+        {offlineRemainingCents >= 50 ? (
+          <OfflineSettlementRows
+            reservation={props.reservation}
+            amountCents={offlineRemainingCents}
+            locked={props.locked}
+          />
         ) : null}
         <InfoRow icon={CircleCheck} label="Paiement encaissé" value={paymentCaptured} />
         <InfoRow icon={ShieldCheck} label="Caution encaissée (suivi manuel)" value={depositCaptured} />
@@ -636,6 +913,7 @@ function ReservationBlock(props: Readonly<{ reservation: Reservation; extrasLabe
 function ReservationIconActions(props: Readonly<{
   reservation: Reservation;
   details: Reservation['details'] | null;
+  paymentCtx: ReservationPaymentVisualContext;
   locked?: boolean;
   lockTitle?: string | null;
   onEdit?: (id: string) => void;
@@ -654,6 +932,7 @@ function ReservationIconActions(props: Readonly<{
   const {
     reservation: r,
     details,
+    paymentCtx,
     locked,
     lockTitle,
     onEdit,
@@ -678,7 +957,6 @@ function ReservationIconActions(props: Readonly<{
     !isOffline && resolveReservationStatus(details) === 'pending_payment';
   const cancelled = isReservationCancelled(details);
   const status = resolveReservationStatus(details);
-  const paymentCtx = { installmentPlan: r.installmentPlan };
   const isFullyPaid = isReservationFullyPaid(paymentCtx, details);
   const hasAnyPayment = isFullyPaid || Boolean(details?.paymentCapturedAt) || status === 'reserved_paid';
   const isPaid = hasAnyPayment;
@@ -994,6 +1272,7 @@ export function ReservationDetailsPanel(props: Readonly<{
     onOpenReservation,
   } = props;
   const extrasCatalog = useExtrasStore((s) => s.extras);
+  const couponsCatalog = useCouponsStore((s) => s.coupons);
   const members = useMembersStore((s) => s.members);
   const contractTemplates = useSettingsStore((s) => s.contracts);
   const setReservations = useReservationsStore((s) => s.replace);
@@ -1358,6 +1637,7 @@ export function ReservationDetailsPanel(props: Readonly<{
 
   const status = d ? resolveReservationStatus(d) : null;
   const summaryTitle = r.title || linkedMemberLabel || 'Réservation';
+  const paymentCtx = buildReservationPaymentContext(r, extrasCatalog, couponsCatalog, reservations);
 
   const detailBlocks = (
     <>
@@ -1377,9 +1657,9 @@ export function ReservationDetailsPanel(props: Readonly<{
         <div className="mt-2 flex flex-wrap items-center gap-2">
           {status && d ? (
             <span
-              className={`inline-flex rounded-lg px-2.5 py-1 text-xs font-semibold ${statusBadgeClass(status, d, reservationPaymentContext(r, extrasCatalog))}`}
+              className={`inline-flex rounded-lg px-2.5 py-1 text-xs font-semibold ${statusBadgeClass(status, d, paymentCtx)}`}
             >
-              {statusDisplayLabel(status, d, reservationPaymentContext(r, extrasCatalog))}
+              {statusDisplayLabel(status, d, paymentCtx)}
             </span>
           ) : null}
           {contractStatus ? <RentalContractStatusBadge status={contractStatus} /> : null}
@@ -1472,6 +1752,7 @@ export function ReservationDetailsPanel(props: Readonly<{
         <ReservationIconActions
           reservation={rForLock}
           details={d}
+          paymentCtx={paymentCtx}
           locked={locked}
           lockTitle={lockMessage}
           onEdit={locked ? undefined : onEdit}

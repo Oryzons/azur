@@ -1,4 +1,5 @@
 /// <reference types="vite/client" />
+/// <reference types="vite-plugin-pwa/client" />
 
 interface ImportMetaEnv {
   /** Latitude du point de prévision marine (décimal). Ex. 43.3586 (Port Ouest) */

@@ -76,4 +76,8 @@ export class ExtraAvailabilityQueryDto {
   @IsOptional()
   @IsUUID('4')
   excludeReservationId?: string;
+
+  @IsOptional()
+  @IsUUID('4')
+  excludeExtraRentalId?: string;
 }

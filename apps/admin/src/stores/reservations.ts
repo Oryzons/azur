@@ -5,8 +5,8 @@ import {
   emptyWizardDetails,
   type ReservationWizardDetails,
 } from '@/pages/calendar/reservationWizardTypes';
+import { resolveStripeGrossPaidCents, resolveRentalContractStatus } from '@bleu-calanque/shared';
 import { resolveReservationStatus, statusFromApi, statusToApi } from '@/lib/reservationStatus';
-import { resolveRentalContractStatus } from '@bleu-calanque/shared';
 
 export type StoredReservation = {
   id: string;
@@ -29,6 +29,9 @@ export type StoredReservation = {
   rentalContractStatus?: import('@bleu-calanque/shared').RentalContractStatus;
   stripeFeeCents?: number | null;
   stripeNetCents?: number | null;
+  paymentLinkUrl?: string | null;
+  /** Avoir client déjà imputé (centimes), renvoyé par l'API. */
+  storeCreditAppliedCents?: number | null;
 };
 
 function serialize(r: Reservation): StoredReservation {
@@ -169,7 +172,7 @@ function reservationToApi(s: StoredReservation) {
     paymentCapturedAt: d?.paymentCapturedAt ?? null,
     depositCapturedAt: d?.depositCapturedAt ?? null,
     confirmationEmailSentAt: d?.confirmationEmailSentAt ?? null,
-    totalDueCents: s.totalDueCents ?? null,
+    ...(d?.paymentCapturedAt ? {} : { totalDueCents: s.totalDueCents ?? null }),
     cancelledAt: d?.cancelledAt ?? null,
     status: statusToApi(resolveReservationStatus(d)),
     extras,
@@ -294,35 +297,34 @@ function reservationFromApi(x: any): StoredReservation {
       details = {
         ...details,
         cancelledAt: new Date(x.cancelledAt).toISOString(),
-        ...(apiStatus === 'refunded' || apiStatus === 'partially_refunded'
-          ? { status: apiStatus }
-          : { status: 'cancelled' as const }),
       };
     } else if (apiStatus) {
       details = { ...details, status: apiStatus };
-    }
-    const resolved = resolveReservationStatus(details, x?.status);
-    if (
-      x?.paymentCapturedAt &&
-      resolved !== 'cancelled' &&
-      apiStatus !== 'cancelled' &&
-      apiStatus !== 'refunded' &&
-      apiStatus !== 'partially_refunded'
-    ) {
-      const paidStatus =
-        resolved === 'refunded' || resolved === 'partially_refunded' ? resolved : 'reserved_paid';
-      details = {
-        ...details,
-        paymentCapturedAt: new Date(x.paymentCapturedAt).toISOString(),
-        status: paidStatus,
-      };
     }
   }
 
   if (details && apiRefunds.length > 0) {
     details = { ...details, refunds: apiRefunds };
-    if (apiStatus === 'refunded' || apiStatus === 'partially_refunded') {
-      details = { ...details, status: apiStatus };
+  }
+
+  if (details) {
+    const resolved = resolveReservationStatus(details, x?.status);
+    if (
+      x?.paymentCapturedAt &&
+      resolved !== 'cancelled' &&
+      resolved !== 'refunded' &&
+      resolved !== 'partially_refunded' &&
+      apiStatus !== 'cancelled' &&
+      apiStatus !== 'refunded' &&
+      apiStatus !== 'partially_refunded'
+    ) {
+      details = {
+        ...details,
+        paymentCapturedAt: new Date(x.paymentCapturedAt).toISOString(),
+        status: 'reserved_paid',
+      };
+    } else {
+      details = { ...details, status: resolved };
     }
   }
 
@@ -333,6 +335,15 @@ function reservationFromApi(x: any): StoredReservation {
     }
     if (installmentPlan.length === 2) {
       details = { ...details, installmentMethods: installmentPlan.map((p) => p.method) };
+    }
+    if (details.paymentCapturedAt) {
+      const stripeGross = resolveStripeGrossPaidCents({
+        stripeNetCents: x?.stripeNetCents != null ? Number(x.stripeNetCents) : null,
+        stripeFeeCents: x?.stripeFeeCents != null ? Number(x.stripeFeeCents) : null,
+      });
+      if (stripeGross >= 50 && !(Number(details.onlinePaidBaselineCents) >= 50)) {
+        details = { ...details, onlinePaidBaselineCents: stripeGross };
+      }
     }
   }
 
@@ -370,6 +381,9 @@ function reservationFromApi(x: any): StoredReservation {
     installmentPlan,
     stripeFeeCents: x?.stripeFeeCents != null ? Number(x.stripeFeeCents) : null,
     stripeNetCents: x?.stripeNetCents != null ? Number(x.stripeNetCents) : null,
+    paymentLinkUrl: x?.paymentLinkUrl ? String(x.paymentLinkUrl) : null,
+    storeCreditAppliedCents:
+      x?.storeCreditAppliedCents != null ? Number(x.storeCreditAppliedCents) : null,
   };
 }
 

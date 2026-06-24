@@ -21,8 +21,8 @@ export const OWNER_PORTAL_TOUR_STEPS: InteractiveTourStep[] = [
     placement: 'right',
     body: (
       <>
-        Ouvrez <strong>Mon calendrier</strong> pour voir le planning : réservations clients (couleurs) et vos
-        indisponibilités (gris).
+        Ouvrez <strong>Mon calendrier</strong> pour voir le planning : les blocs colorés sont des{' '}
+        <strong>réservations clients</strong>, le gris vos <strong>indisponibilités</strong>.
       </>
     ),
   },
@@ -34,8 +34,8 @@ export const OWNER_PORTAL_TOUR_STEPS: InteractiveTourStep[] = [
     spotlightPadding: 6,
     body: (
       <>
-        Chaque ligne est un de vos bateaux. Les blocs gris ardoise indiquent un <strong>créneau réservé</strong>{' '}
-        (date et horaires uniquement) — cliquez pour consulter, sans modifier.
+        Chaque ligne est un de vos bateaux. Les blocs colorés = <strong>réservation client</strong> (horaires
+        uniquement) — cliquez pour consulter, sans modifier. Le gris = <strong>indisponibilité</strong>.
       </>
     ),
   },

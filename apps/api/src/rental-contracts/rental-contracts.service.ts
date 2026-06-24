@@ -107,6 +107,12 @@ const reservationInclude = {
       boatLicenseFrontUrl: true,
       boatLicenseBackUrl: true,
       airbusBadgePhotoUrl: true,
+      clientIdType: true,
+      clientIdNumber: true,
+      licenseType: true,
+      licenseNumber: true,
+      licenseCountry: true,
+      licenseYear: true,
     },
   },
 } satisfies Prisma.ReservationInclude;
@@ -1338,7 +1344,9 @@ export class RentalContractsService {
         licenseType: license.licenseType,
         licenseNumber: license.licenseNumber,
         licenseCountry: license.licenseCountry,
-        licenseYear: contractDisplayOrNotSet(contractFields.licenseYear),
+        licenseYear: contractDisplayOrNotSet(
+          contractFields.licenseYear?.trim() || member?.licenseYear?.trim() || null,
+        ),
       },
       bateau: {
         name: r.boat.name,

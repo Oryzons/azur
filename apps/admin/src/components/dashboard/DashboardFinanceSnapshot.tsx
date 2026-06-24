@@ -1,9 +1,9 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { AnimatedNumber } from '@/components/AnimatedNumber';
 import { DashboardSectionCard } from '@/components/dashboard/DashboardSectionCard';
 import { addDays, startOfDay, startOfMonth, startOfWeekMonday } from '@/pages/calendar/calendarConstants';
-import { euro, sumTotals } from '@/pages/finances/pricingTotals';
+import { sumTotals, euro } from '@/pages/finances/pricingTotals';
+import { FluidInlineAmount } from '@/components/ui/FluidInlineAmount';
 import { deserializeReservation, useReservationsStore } from '@/stores/reservations';
 import { useExtrasStore } from '@/stores/extras';
 import { useCouponsStore } from '@/stores/coupons';
@@ -60,12 +60,14 @@ export function DashboardFinanceSnapshot() {
         {rows.map(({ key, label, data }) => (
           <li
             key={key}
-            className="flex flex-col justify-between rounded-xl border border-zinc-100 bg-zinc-50/80 px-4 py-3.5"
+            className="flex min-w-0 flex-col justify-between rounded-xl border border-zinc-100 bg-zinc-50/80 px-4 py-3.5"
           >
             <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">{label}</p>
-            <p className="mt-2 text-2xl font-bold tabular-nums text-zinc-900">
-              <AnimatedNumber value={data.total} format={(n) => `${euro(n)} €`} />
-            </p>
+            <FluidInlineAmount
+              className="mt-2"
+              value={data.total}
+              format={(n) => `${euro(n)} €`}
+            />
             <p className="mt-1 text-sm text-zinc-500">
               <span className="font-semibold tabular-nums text-zinc-700">{data.count}</span> réservation
               {data.count !== 1 ? 's' : ''}

@@ -6,7 +6,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AdminOnly, ComptabiliteOrDesk, DeskOnly, ReservationsRead } from '../common/decorators/role-groups.decorator';
 import type { AuthUser } from '@bleu-calanque/shared';
 import { ReservationsService } from './reservations.service';
-import { CancelReservationDto, CreateReservationRefundDto, SettleInstallmentDto, UpsertReservationDto } from './reservations.dto';
+import { CancelReservationDto, CreateReservationRefundDto, SettleInstallmentDto, SettleSupplementDto, UpsertReservationDto } from './reservations.dto';
 import { StripePaymentsService } from '../notifications/stripe-payments.service';
 
 @Controller('reservations')
@@ -135,6 +135,24 @@ export class ReservationsController {
     @Body() body: SettleInstallmentDto,
   ) {
     return this.reservations.settleInstallment(id, Number(sequence), body.paid ?? true);
+  }
+
+  @Post(':id/supplement/settle')
+  @DeskOnly()
+  settleSupplement(@Param('id', ParseUUIDPipe) id: string, @Body() body: SettleSupplementDto) {
+    return this.reservations.settleSupplement(id, body);
+  }
+
+  @Post(':id/supplement/send-payment-email')
+  @DeskOnly()
+  sendSupplementPaymentEmail(@Param('id', ParseUUIDPipe) id: string) {
+    return this.reservations.sendSupplementPaymentEmail(id);
+  }
+
+  @Post(':id/offline/settle')
+  @DeskOnly()
+  settleOfflineDue(@Param('id', ParseUUIDPipe) id: string, @Body() body: SettleSupplementDto) {
+    return this.reservations.settleOfflineDue(id, body);
   }
 
   @Post(':id/refund')

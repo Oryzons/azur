@@ -13,6 +13,8 @@ import {
 import type { Reservation } from '@/pages/calendar/reservationTypes';
 import { reservationClientLabel, reservationStatusBadge } from '@/lib/reservationUi';
 import { useExtrasStore } from '@/stores/extras';
+import { useCouponsStore } from '@/stores/coupons';
+import { deserializeReservation, useReservationsStore } from '@/stores/reservations';
 import { isReservationCancelled } from '@/lib/reservationStatus';
 import type { DashboardDayView } from '@/lib/dashboardDay';
 import { formatDashboardDayTitle } from '@/lib/dashboardDay';
@@ -329,8 +331,17 @@ function RentalRow(props: Readonly<{
 }>) {
   const { reservation: r, boatsById, tablet, dense, highlight } = props;
   const extrasCatalog = useExtrasStore((s) => s.extras);
+  const couponsCatalog = useCouponsStore((s) => s.coupons);
+  const reservationItems = useReservationsStore((s) => s.items);
+  const allReservations = useMemo(
+    () => reservationItems.map((s) => deserializeReservation(s)),
+    [reservationItems],
+  );
   const boat = boatsById.get(r.boatId);
-  const badge = reservationStatusBadge(r, extrasCatalog);
+  const badge = reservationStatusBadge(r, extrasCatalog, {
+    coupons: couponsCatalog,
+    allReservations,
+  });
   const client = reservationClientLabel(r);
   const showClient = client && client.toLowerCase() !== r.title.trim().toLowerCase();
   const { checkInDone, checkOutDone } = checkFlags(r, tablet);

@@ -3,13 +3,13 @@ import {
   calendarDaysInRange,
   createExtraSchema,
   endOfCalendarDay,
-  maxDailyExtraReserved,
+  maxDailyExtraReservedFromSlots,
   startOfCalendarDay,
   updateExtraSchema,
   type ExtraAvailability,
 } from '@bleu-calanque/shared';
 import { PrismaService } from '../prisma/prisma.service';
-import { ExtraBillingUnit, ExtraPriceKind, PaymentChannel, ReservationStatus } from '@prisma/client';
+import { ExtraBillingUnit, ExtraPriceKind, ExtraRentalStatus, PaymentChannel, ReservationStatus } from '@prisma/client';
 import { validateInput } from '../common/validation/validate-input';
 import { AuditService } from '../common/audit/audit.service';
 import { AuditEntity } from '../common/audit/audit.constants';
@@ -22,6 +22,7 @@ function trimOrThrow(v: string, label: string) {
   return x;
 }
 
+const STOCK_CONSUMING_EXTRA_RENTAL_STATUSES: ExtraRentalStatus[] = ['PENDING_PAYMENT', 'PAID'];
 /** Réservations actives qui consomment du stock d'extras. */
 const STOCK_CONSUMING_STATUSES: ReservationStatus[] = [
   'PENDING_PAYMENT',
@@ -61,13 +62,14 @@ export class ExtrasService {
     start: string;
     end: string;
     excludeReservationId?: string;
+    excludeExtraRentalId?: string;
   }): Promise<Record<string, ExtraAvailability>> {
     const { startAt, endAt } = parseSlotRange(input.start, input.end);
     const days = calendarDaysInRange(startAt, endAt);
     const rangeStart = startOfCalendarDay(startAt);
     const rangeEnd = endOfCalendarDay(days[days.length - 1] ?? startAt);
 
-    const [extras, overlapping] = await Promise.all([
+    const [extras, overlapping, standaloneRentals] = await Promise.all([
       this.prisma.extra.findMany({
         where: { enabled: true },
         select: { id: true, stock: true },
@@ -85,20 +87,36 @@ export class ExtrasService {
           extras: { select: { extraId: true, quantity: true } },
         },
       }),
+      this.prisma.extraRental.findMany({
+        where: {
+          status: { in: STOCK_CONSUMING_EXTRA_RENTAL_STATUSES },
+          startAt: { lt: rangeEnd },
+          endAt: { gt: rangeStart },
+          ...(input.excludeExtraRentalId ? { id: { not: input.excludeExtraRentalId } } : {}),
+        },
+        select: { startAt: true, endAt: true, extraId: true, quantity: true },
+      }),
     ]);
 
-    const reservations = overlapping.map((r) => ({
-      startAt: r.startAt,
-      endAt: r.endAt,
-      extras: r.extras.map((line) => ({
-        extraId: line.extraId,
-        quantity: line.quantity > 0 ? line.quantity : 1,
+    const slots = [
+      ...overlapping.map((r) => ({
+        startAt: r.startAt,
+        endAt: r.endAt,
+        lines: r.extras.map((line) => ({
+          extraId: line.extraId,
+          quantity: line.quantity > 0 ? line.quantity : 1,
+        })),
       })),
-    }));
+      ...standaloneRentals.map((r) => ({
+        startAt: r.startAt,
+        endAt: r.endAt,
+        lines: [{ extraId: r.extraId, quantity: r.quantity > 0 ? r.quantity : 1 }],
+      })),
+    ];
 
     const out: Record<string, ExtraAvailability> = {};
     for (const ex of extras) {
-      const reserved = maxDailyExtraReserved({ days, reservations, extraId: ex.id });
+      const reserved = maxDailyExtraReservedFromSlots({ days, slots, extraId: ex.id });
       if (ex.stock == null) {
         out[ex.id] = { stock: null, reserved, remaining: null };
       } else {
@@ -117,6 +135,7 @@ export class ExtrasService {
     startAt: Date;
     endAt: Date;
     excludeReservationId?: string;
+    excludeExtraRentalId?: string;
     items: { extraId: string; quantity?: number }[];
   }): Promise<void> {
     if (!input.items.length) return;
@@ -126,6 +145,7 @@ export class ExtrasService {
       start: input.startAt.toISOString(),
       end: input.endAt.toISOString(),
       excludeReservationId: input.excludeReservationId,
+      excludeExtraRentalId: input.excludeExtraRentalId,
     });
 
     for (const item of input.items) {

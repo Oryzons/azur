@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, GripVertical } from 'lucide-react';
+import { GripVertical } from 'lucide-react';
 import {
   assignLanes,
   BOAT_COL_W,
@@ -28,6 +28,10 @@ import {
 } from '@/pages/calendar/calendarConstants';
 import { DayPlanning } from '@/pages/calendar/DayPlanning';
 import { ReservationPill } from '@/pages/calendar/ReservationPill';
+import {
+  allowReservationDragOver as allowReservationDragOverEvent,
+  readReservationDragId,
+} from '@/pages/calendar/calendarReservationDrag';
 import type { Reservation } from '@/pages/calendar/reservationTypes';
 import {
   ReservationCreateWizard,
@@ -39,6 +43,7 @@ import { deserializeReservation, seedDemoReservationsIfEmpty, useReservationsSto
 import { useBoatsStore } from '@/stores/boats';
 import { ReservationDetailsPanel } from '@/pages/reservations/ReservationDetailsPanel';
 import { CalendarFiltersPanel } from '@/components/calendar/CalendarFiltersPanel';
+import { CalendarToolbar } from '@/components/calendar/CalendarToolbar';
 import { usePageFiltersPanel, type PageFiltersConfig } from '@/contexts/PageFiltersContext';
 import {
   applyCalendarBoatVisibility,
@@ -67,7 +72,7 @@ import { CalendarPageSkeleton, CalendarPlanningSkeleton } from '@/components/ske
 import { useCoreStoresReady } from '@/lib/useStoreHydration';
 import { BoatCoverAvatar } from '@/components/media/BoatCoverAvatar';
 import { buildCalendarPillLegend } from '@/lib/calendarPillLegend';
-import { CALENDAR_STATUS_LEGEND, type ReservationStatus } from '@/lib/reservationStatus';
+import { CALENDAR_STATUS_LEGEND, CALENDAR_EXTRA_RENTAL_COLOR, CALENDAR_UNAVAILABILITY_COLORS, OWNER_CALENDAR_LEGEND, type ReservationStatus } from '@/lib/reservationStatus';
 import { useExtrasStore } from '@/stores/extras';
 import { useAuthStore } from '@/stores/auth';
 import { isOwnerUser } from '@/lib/userRoles';
@@ -75,7 +80,11 @@ import { useOwnerFleetScope } from '@/lib/ownerFleetScope';
 import { useUnavailabilitiesStore, type BoatUnavailability } from '@/stores/unavailabilities';
 import { UnavailabilityModal } from '@/components/calendar/UnavailabilityModal';
 import { UnavailabilityPill } from '@/components/calendar/UnavailabilityPill';
+import { ExtraRentalModal } from '@/components/calendar/ExtraRentalModal';
+import { ExtraRentalPill } from '@/components/calendar/ExtraRentalPill';
 import { unavailabilitiesForBoatPeriod } from '@/lib/planningUnavailability';
+import { extraRentalsForPeriod } from '@/lib/extraRentalsForPeriod';
+import { useExtraRentalsStore, type ExtraRental, type ExtraRentalInput } from '@/stores/extraRentals';
 import { extractApiErrorMessage } from '@/lib/apiError';
 
 type Boat = {
@@ -109,6 +118,13 @@ export function CalendarPage() {
   const [unavailInitialTimes, setUnavailInitialTimes] = useState<
     Readonly<{ startTime: string; endTime: string }> | undefined
   >();
+  const extraRentalsRaw = useExtraRentalsStore((s) => s.items);
+  const refreshExtraRentals = useExtraRentalsStore((s) => s.refresh);
+  const createExtraRental = useExtraRentalsStore((s) => s.create);
+  const updateExtraRental = useExtraRentalsStore((s) => s.update);
+  const [extraRentalModalOpen, setExtraRentalModalOpen] = useState(false);
+  const [editingExtraRental, setEditingExtraRental] = useState<ExtraRental | null>(null);
+  const [extraRentalInitialDay, setExtraRentalInitialDay] = useState<Date | undefined>();
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailsReservationId, setDetailsReservationId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -214,6 +230,10 @@ export function CalendarPage() {
   }, [refreshUnavail]);
 
   useEffect(() => {
+    if (!isOwner) void refreshExtraRentals();
+  }, [isOwner, refreshExtraRentals]);
+
+  useEffect(() => {
     const id = searchParams.get('unavail');
     if (!id || !unavailItems.length) return;
     const row = unavailItems.find((u) => u.id === id);
@@ -269,6 +289,11 @@ export function CalendarPage() {
     return { start, end, days: [start], cols: 1, title, month: cursor.getMonth() };
   }, [cursor, view]);
 
+  const periodExtraRentals = useMemo(
+    () => extraRentalsForPeriod(extraRentalsRaw, period.start, period.end),
+    [extraRentalsRaw, period.start, period.end],
+  );
+
   const calendarReservations = useMemo(() => {
     const hiddenStatuses = isOwner
       ? new Set<ReservationStatus>([...filters.hiddenStatuses, 'cancelled'])
@@ -285,6 +310,16 @@ export function CalendarPage() {
     const order = boatGlobalOrder.length > 0 ? boatGlobalOrder : normalizeBoatOrder(null, catalogIds);
     return sortCalendarBoats(visibleBoats, filters.sortMode, order, fleets, catalogBoats.length > 0);
   }, [boatGlobalOrder, catalogIds, visibleBoats, filters.sortMode, fleets, catalogBoats.length]);
+
+  const periodEventCount = useMemo(() => {
+    const boatIds = new Set(orderedFilteredBoats.map((b) => b.id));
+    let count = periodExtraRentals.length;
+    for (const r of calendarReservations) {
+      if (!boatIds.has(r.boatId)) continue;
+      if (overlaps(r.start, r.end, period.start, period.end)) count += 1;
+    }
+    return count;
+  }, [calendarReservations, orderedFilteredBoats, period.start, period.end, periodExtraRentals.length]);
 
   function reorderCalendarBoats(fromIndex: number, toIndex: number) {
     const vis = orderedFilteredBoats.map((b) => b.id);
@@ -401,6 +436,18 @@ export function CalendarPage() {
     setCreateOpen(false);
   }
 
+  function openExtraRentalCreate(day?: Date) {
+    setEditingExtraRental(null);
+    setExtraRentalInitialDay(day ? startOfDay(day) : startOfDay(cursor));
+    setExtraRentalModalOpen(true);
+  }
+
+  function openExtraRentalEdit(item: ExtraRental) {
+    setEditingExtraRental(item);
+    setExtraRentalInitialDay(startOfDay(new Date(item.startAt)));
+    setExtraRentalModalOpen(true);
+  }
+
   function handleWizardSubmit(payload: ReservationWizardSubmitPayload) {
     const { boatId, dateIso, startTime, endTime, bookerName, details, totalDueCents } = payload;
     const [sh, sm] = startTime.split(':').map(Number);
@@ -431,7 +478,7 @@ export function CalendarPage() {
                 end,
                 color: x.color ?? PRIMARY,
                 details,
-                totalDueCents,
+                ...(existing.details?.paymentCapturedAt ? {} : { totalDueCents }),
               }
             : x,
         );
@@ -525,6 +572,8 @@ export function CalendarPage() {
           setUnavailInitialDay(startOfDay(new Date(u.startAt)));
           setUnavailModalOpen(true);
         }}
+        extraRentals={periodExtraRentals}
+        onOpenExtraRental={openExtraRentalEdit}
         highlightDay={highlightDay}
       />
     );
@@ -535,6 +584,7 @@ export function CalendarPage() {
         boats={orderedFilteredBoats}
         reservations={calendarReservations}
         unavailabilities={unavailItems}
+        extraRentals={periodExtraRentals}
         start={period.start}
         end={period.end}
         days={period.days}
@@ -547,6 +597,7 @@ export function CalendarPage() {
           setUnavailInitialDay(startOfDay(new Date(u.startAt)));
           setUnavailModalOpen(true);
         }}
+        onOpenExtraRental={openExtraRentalEdit}
         onReorderBoatRows={isOwner ? undefined : reorderCalendarBoats}
         readOnly={isOwner}
         ownerMinimal={isOwner}
@@ -558,7 +609,7 @@ export function CalendarPage() {
   return (
     <ContentReveal ready={coreReady} skeleton={<CalendarPageSkeleton />}>
     <div className="space-y-4">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+      <div className="space-y-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-zinc-900">
             {isOwner ? 'Mon calendrier' : 'Calendrier'}
@@ -566,96 +617,53 @@ export function CalendarPage() {
           <p className="mt-1.5 max-w-xl text-sm leading-relaxed text-zinc-500">
             {isOwner
               ? 'Planning de vos bateaux — réservations et indisponibilités.'
-              : 'Planning des bateaux, réservations et indisponibilités.'}
+              : 'Planning des bateaux, réservations, extras et indisponibilités.'}
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-          {!isOwner && boatsHydrated && catalogBoats.length > 0 ? (
-            <div className="flex gap-2 items-center px-3 py-2 bg-white rounded-2xl border shadow-sm border-zinc-200">
-              <span className="text-sm font-semibold text-zinc-700">Flotille</span>
-              <select
-                value={filters.fleetId}
-                onChange={(e) => patchFilter('fleetId', e.target.value)}
-                className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm font-semibold text-zinc-700 outline-none focus:border-[#416B9F]/60 focus:ring-2 focus:ring-[#416B9F]/15"
-              >
-                <option value="">Toutes</option>
-                {fleets.map((f) => (
-                  <option key={f.id} value={f.id}>
-                    {f.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ) : null}
-          <div className="flex gap-2 items-center p-1 bg-white rounded-2xl border shadow-sm border-zinc-200">
-            {([
-              { k: 'month', label: 'Mois' },
-              { k: 'week', label: 'Semaine' },
-              { k: 'day', label: 'Jour' },
-            ] as const).map((b) => {
-              const active = view === b.k;
-              return (
-                <button
-                  key={b.k}
-                  type="button"
-                  onClick={() => setView(b.k)}
-                  className={[
-                    'rounded-2xl px-4 py-2 text-sm font-semibold transition-colors',
-                    active ? 'bg-[#416B9F] text-white shadow-sm shadow-[#416B9F]/20' : 'text-zinc-600 hover:bg-zinc-50',
-                  ].join(' ')}
-                >
-                  {b.label}
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="flex gap-2 items-center p-1 bg-white rounded-2xl border shadow-sm border-zinc-200">
-            <button
-              type="button"
-              onClick={goPrev}
-              className="flex justify-center items-center w-10 h-10 rounded-2xl text-zinc-600 hover:bg-zinc-50"
-              aria-label="Précédent"
-            >
-              <ChevronLeft className="w-5 h-5" strokeWidth={1.75} />
-            </button>
-            <button
-              type="button"
-              onClick={goToday}
-              className="px-3 py-2 text-sm font-semibold rounded-2xl text-zinc-700 hover:bg-zinc-50"
-            >
-              Aujourd’hui
-            </button>
-            <button
-              type="button"
-              onClick={goNext}
-              className="flex justify-center items-center w-10 h-10 rounded-2xl text-zinc-600 hover:bg-zinc-50"
-              aria-label="Suivant"
-            >
-              <ChevronRight className="w-5 h-5" strokeWidth={1.75} />
-            </button>
-          </div>
-        </div>
+        <CalendarToolbar
+          view={view}
+          onViewChange={setView}
+          periodStart={period.start}
+          periodEnd={period.end}
+          cursorDate={cursor}
+          eventCount={periodEventCount}
+          onDateSelect={(date) => setCursor(startOfDay(date))}
+          onPrev={goPrev}
+          onNext={goNext}
+          onToday={goToday}
+          {...(!isOwner && boatsHydrated && catalogBoats.length > 0
+            ? {
+                fleetId: filters.fleetId,
+                fleets,
+                onFleetChange: (fleetId: string) => patchFilter('fleetId', fleetId),
+              }
+            : {})}
+          {...(!isOwner ? { onExtraRental: () => openExtraRentalCreate() } : {})}
+        />
       </div>
 
       <section
-        className="overflow-hidden rounded-3xl border border-zinc-200/80 bg-white shadow-sm shadow-zinc-200/40"
+        className="relative z-0 overflow-hidden rounded-3xl border border-zinc-200/80 bg-white shadow-sm shadow-zinc-200/40"
         data-tour={isOwner ? 'owner-calendar-planning' : 'admin-calendar-planning'}
       >
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-100 bg-gradient-to-r from-zinc-50/90 to-white px-4 py-3 sm:px-5">
-          <p className="text-base font-semibold capitalize text-zinc-900">{period.title}</p>
+        <div className="flex items-center justify-end border-b border-zinc-100 bg-zinc-50/40 px-4 py-2 sm:px-5">
           <p
             className="text-xs text-zinc-400"
             data-tour={isOwner ? 'owner-calendar-unavail-hint' : undefined}
           >
             {isOwner
-              ? 'Défilement horizontal · clic sur une date pour une indisponibilité'
-              : 'Faites défiler horizontalement pour voir tout le mois'}
+              ? 'Clic sur une date pour une indisponibilité'
+              : 'Défilement horizontal · clic sur un créneau pour une réservation'}
           </p>
         </div>
 
-        <div className="p-1 sm:p-2">{planningBody}</div>
+        <div
+          key={`${view}-${period.start.toISOString()}`}
+          className="bc-cal-planning-enter p-1 sm:p-2"
+        >
+          {planningBody}
+        </div>
       </section>
 
       <ReservationDetailsPanel
@@ -736,34 +744,80 @@ export function CalendarPage() {
         />
       ) : null}
 
+      {!isOwner ? (
+        <ExtraRentalModal
+          key={editingExtraRental?.id ?? `new-${extraRentalInitialDay?.getTime() ?? 'today'}`}
+          open={extraRentalModalOpen}
+          extras={extrasCatalog}
+          initial={editingExtraRental}
+          initialDay={extraRentalInitialDay}
+          onClose={() => {
+            setExtraRentalModalOpen(false);
+            setEditingExtraRental(null);
+            setExtraRentalInitialDay(undefined);
+          }}
+          onSave={async (input, existingId) => {
+            try {
+              if (existingId) {
+                const saved = await updateExtraRental(existingId, input);
+                setCursor(startOfDay(new Date(saved.startAt)));
+              } else {
+                const saved = await createExtraRental(input as ExtraRentalInput);
+                setCursor(startOfDay(new Date(saved.startAt)));
+              }
+            } catch (e) {
+              throw new Error(extractApiErrorMessage(e, 'Enregistrement impossible.'));
+            }
+          }}
+          onCancelRental={
+            editingExtraRental
+              ? async (id) => {
+                  await updateExtraRental(id, { cancel: true });
+                }
+              : undefined
+          }
+        />
+      ) : null}
+
       <section className="rounded-2xl border border-zinc-200/90 bg-white p-4 shadow-sm shadow-zinc-200/40">
         <h2 className="text-sm font-semibold text-zinc-800">Légende</h2>
         <p className="mt-1 text-xs text-zinc-500">
           {isOwner
-            ? 'Gris = vos indisponibilités · bleu ardoise = créneaux réservés (horaires uniquement).'
-            : 'Couleur des blocs selon le statut (orange = payée partiellement, ex. hors ligne restant).'}
+            ? 'Location client sur votre bateau, ou créneau que vous avez bloqué.'
+            : 'Chaque bloc reprend la couleur de son statut de paiement (voir pastilles ci-dessous).'}
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
           <div className="flex items-center gap-2 rounded-xl border border-zinc-200/90 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-700 shadow-sm">
-            <span className="h-3 w-3 shrink-0 rounded-sm bg-zinc-500" aria-hidden />
+            <span
+              className="h-3 w-3 shrink-0 rounded-sm ring-1 ring-zinc-300/60"
+              style={{ background: CALENDAR_UNAVAILABILITY_COLORS.background }}
+              aria-hidden
+            />
             Indisponibilité
           </div>
-          {isOwner ? (
+          {!isOwner ? (
             <div className="flex items-center gap-2 rounded-xl border border-zinc-200/90 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-700 shadow-sm">
-              <span className="h-3 w-3 shrink-0 rounded-sm bg-slate-500" aria-hidden />
-              Location client
+              <span
+                className="h-3 w-3 shrink-0 rounded-sm ring-1 ring-zinc-300/60"
+                style={{ background: CALENDAR_EXTRA_RENTAL_COLOR }}
+                aria-hidden
+              />
+              Extra loué seul
             </div>
-          ) : (
-            CALENDAR_STATUS_LEGEND.map(({ label, color }) => (
-              <div
-                key={label}
-                className="flex items-center gap-2 rounded-xl border border-zinc-200/90 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-700 shadow-sm"
-              >
-                <span className="h-3 w-3 shrink-0 rounded-sm" style={{ background: color }} aria-hidden />
-                {label}
-              </div>
-            ))
-          )}
+          ) : null}
+          {(isOwner ? OWNER_CALENDAR_LEGEND : CALENDAR_STATUS_LEGEND).map(({ label, color }) => (
+            <div
+              key={label}
+              className="flex items-center gap-2 rounded-xl border border-zinc-200/90 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-700 shadow-sm"
+            >
+              <span
+                className="h-2.5 w-5 shrink-0 rounded-full shadow-sm ring-1 ring-black/10"
+                style={{ background: color }}
+                aria-hidden
+              />
+              {label}
+            </div>
+          ))}
         </div>
         {!isOwner ? (
           <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -790,11 +844,100 @@ export function CalendarPage() {
   );
 }
 
+function ExtraRentalsSpanRow(props: Readonly<{
+  extraRentals: ExtraRental[];
+  days: Date[];
+  start: Date;
+  gridCols: string;
+  isWeek: boolean;
+  onOpenExtraRental: (item: ExtraRental) => void;
+}>) {
+  const { extraRentals, days, start, gridCols, isWeek, onOpenExtraRental } = props;
+  const segs = extraRentals
+    .map((r) => {
+      const rStart = new Date(r.startAt);
+      const rEnd = new Date(r.endAt);
+      const startIdx = clamp(
+        Math.floor((startOfDay(rStart).getTime() - start.getTime()) / 86400000),
+        0,
+        days.length - 1,
+      );
+      const effectiveEnd = new Date(rEnd.getTime() - 1);
+      const endIdx = clamp(
+        Math.floor((startOfDay(effectiveEnd).getTime() - start.getTime()) / 86400000),
+        0,
+        days.length - 1,
+      );
+      return { r, startIdx, endIdx };
+    })
+    .sort((a, b) => a.startIdx - b.startIdx || a.endIdx - b.endIdx);
+
+  const laneInfo = assignLanes(
+    segs,
+    (s) => s.startIdx,
+    (s) => s.endIdx + 1,
+  );
+  const { barH, rowHeight } = planningRowMetrics(laneInfo.lanes);
+  const rounded = isWeek ? 'rounded-lg' : 'rounded-md';
+  const textSize = isWeek ? 'text-[11px]' : 'text-[10px]';
+
+  return (
+    <div className="group flex min-h-[44px]">
+      <div
+        className="sticky left-0 z-10 flex shrink-0 items-center border-r border-zinc-100 bg-violet-50/80 px-4 shadow-[4px_0_12px_-4px_rgba(0,0,0,0.06)]"
+        style={{ width: BOAT_COL_W, height: rowHeight }}
+      >
+        <span className="text-xs font-bold text-violet-900">Extras</span>
+      </div>
+      <div className="relative min-w-0 flex-1" style={{ height: rowHeight }}>
+        <div className="absolute inset-0 grid" style={{ gridTemplateColumns: gridCols }}>
+          {days.map((d) => (
+            <div key={d.toISOString()} className="border-l border-zinc-100/80 bg-violet-50/20" />
+          ))}
+        </div>
+        <div className="absolute inset-0">
+          {segs.map((seg, i) => {
+            const lane = laneInfo.laneByIndex[i] ?? 0;
+            const daySpan = seg.endIdx - seg.startIdx + 1;
+            const top = lane * (barH + PILL_LANE_GAP) + 4;
+            const label = seg.r.extra?.name ?? seg.r.title;
+            return (
+              <div
+                key={seg.r.id}
+                className="absolute box-border min-w-0 px-px"
+                style={{
+                  left: seg.startIdx * DAY_COL_W,
+                  width: daySpan * DAY_COL_W,
+                  top,
+                  height: barH,
+                }}
+              >
+                <ExtraRentalPill
+                  item={seg.r}
+                  label={label}
+                  height={barH}
+                  onClick={() => onOpenExtraRental(seg.r)}
+                  className={[
+                    'pointer-events-auto flex h-full w-full min-w-0 items-center text-left font-semibold shadow-sm',
+                    rounded,
+                    textSize,
+                  ].join(' ')}
+                />
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SpanPlanning(props: Readonly<{
   mode: 'month' | 'week';
   boats: Boat[];
   reservations: Reservation[];
   unavailabilities: BoatUnavailability[];
+  extraRentals: ExtraRental[];
   start: Date;
   end: Date;
   days: Date[];
@@ -803,6 +946,7 @@ function SpanPlanning(props: Readonly<{
   onCreate: (boatId: string, day: Date) => void;
   onOpenReservation: (id: string) => void;
   onOpenUnavailability: (item: BoatUnavailability) => void;
+  onOpenExtraRental: (item: ExtraRental) => void;
   onReorderBoatRows?: (fromIndex: number, toIndex: number) => void;
   readOnly?: boolean;
   ownerMinimal?: boolean;
@@ -812,6 +956,7 @@ function SpanPlanning(props: Readonly<{
     boats,
     reservations,
     unavailabilities,
+    extraRentals,
     start,
     end,
     days,
@@ -821,6 +966,7 @@ function SpanPlanning(props: Readonly<{
     onCreate,
     onOpenReservation,
     onOpenUnavailability,
+    onOpenExtraRental,
     onReorderBoatRows,
     readOnly,
     ownerMinimal = false,
@@ -840,6 +986,53 @@ function SpanPlanning(props: Readonly<{
     const target = reservations.find((r) => r.id === id);
     if (target && isReservationLockedFromReservation(target)) return;
     onMove((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  }
+
+  function moveReservationToDay(id: string, boat: { id: string }, newDay: Date) {
+    const dragged = reservations.find((r) => r.id === id);
+    if (!dragged) return;
+
+    const baseStart = new Date(dragged.start);
+    const baseEnd = new Date(dragged.end);
+    const startH = mode === 'month' ? 9 : baseStart.getHours();
+    const startM = mode === 'month' ? 0 : baseStart.getMinutes();
+    const endH = mode === 'month' ? 17 : baseEnd.getHours();
+    const endM = mode === 'month' ? 0 : baseEnd.getMinutes();
+
+    const newStart = new Date(newDay);
+    newStart.setHours(startH, startM, 0, 0);
+    const newEnd = new Date(newDay);
+    newEnd.setHours(endH, endM, 0, 0);
+
+    updateReservation(id, { boatId: boat.id, start: newStart, end: newEnd });
+  }
+
+  function allowReservationDragOver(e: React.DragEvent) {
+    if (ro) return;
+    allowReservationDragOverEvent(e);
+  }
+
+  function handleReservationDrop(e: React.DragEvent, boat: { id: string }, newDay: Date) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer.types.includes(CALENDAR_BOAT_ROW_DRAG_MIME)) return;
+    const id = readReservationDragId(e.dataTransfer);
+    if (!id) return;
+    moveReservationToDay(id, boat, newDay);
+  }
+
+  function handleReservationDropOnGrid(e: React.DragEvent, boat: { id: string }) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer.types.includes(CALENDAR_BOAT_ROW_DRAG_MIME)) return;
+    const id = readReservationDragId(e.dataTransfer);
+    if (!id) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const colW = isWeek ? rect.width / Math.max(days.length, 1) : DAY_COL_W;
+    const dayIndex = clamp(Math.floor(x / colW), 0, days.length - 1);
+    const newDay = days[dayIndex] ?? days[0] ?? start;
+    moveReservationToDay(id, boat, newDay);
   }
 
   const openReservation = (id: string) => onOpenReservation(id);
@@ -920,6 +1113,16 @@ function SpanPlanning(props: Readonly<{
           </div>
 
           <div className="divide-y divide-zinc-100">
+            {!ownerView && extraRentals.length > 0 ? (
+              <ExtraRentalsSpanRow
+                extraRentals={extraRentals}
+                days={days}
+                start={start}
+                gridCols={gridCols}
+                isWeek={isWeek}
+                onOpenExtraRental={onOpenExtraRental}
+              />
+            ) : null}
             {boats.map((boat, rowIndex) => {
               const rowRes = reservations.filter((r) => r.boatId === boat.id && overlaps(r.start, r.end, start, end));
               const rowUnavail = unavailabilitiesForBoatPeriod(unavailabilities, boat.id, start, end);
@@ -1075,42 +1278,8 @@ function SpanPlanning(props: Readonly<{
                   <section
                     className="relative z-0 flex-1"
                     style={{ height: rowHeight }}
-                    onDragOver={ro ? undefined : (e) => e.preventDefault()}
-                    onDrop={
-                      ro
-                        ? undefined
-                        : (e) => {
-                      if (e.dataTransfer.types.includes(CALENDAR_BOAT_ROW_DRAG_MIME)) {
-                        e.preventDefault();
-                        return;
-                      }
-                      const id = e.dataTransfer.getData('text/reservationId');
-                      if (!id) return;
-                      const rect = e.currentTarget.getBoundingClientRect();
-                      const x = e.clientX - rect.left;
-                      const colW = isWeek ? rect.width / Math.max(days.length, 1) : DAY_COL_W;
-                      const dayIndex = clamp(Math.floor(x / colW), 0, days.length - 1);
-                      const newDay = days[dayIndex] ?? days[0] ?? start;
-
-                      const dragged = reservations.find((r) => r.id === id);
-                      if (!dragged) return;
-
-                      // Conserver l'heure (si week) ou caler sur 09:00 par défaut (si month)
-                      const baseStart = new Date(dragged.start);
-                      const baseEnd = new Date(dragged.end);
-
-                      const startH = mode === 'month' ? 9 : baseStart.getHours();
-                      const startM = mode === 'month' ? 0 : baseStart.getMinutes();
-                      const endH = mode === 'month' ? 17 : baseEnd.getHours();
-                      const endM = mode === 'month' ? 0 : baseEnd.getMinutes();
-
-                      const newStart = new Date(newDay);
-                      newStart.setHours(startH, startM, 0, 0);
-                      const newEnd = new Date(newDay);
-                      newEnd.setHours(endH, endM, 0, 0);
-
-                      updateReservation(id, { boatId: boat.id, start: newStart, end: newEnd });
-                    }}
+                    onDragOver={ro ? undefined : allowReservationDragOver}
+                    onDrop={ro ? undefined : (e) => handleReservationDropOnGrid(e, boat)}
                     aria-label={`Planning ${boat.name}`}
                   >
                     <div className="absolute inset-0 z-0">
@@ -1132,6 +1301,8 @@ function SpanPlanning(props: Readonly<{
                               'h-full border-l border-zinc-100/90 text-left',
                               dayCellTone(d),
                             ].join(' ')}
+                            onDragOver={ro ? undefined : allowReservationDragOver}
+                            onDrop={ro ? undefined : (e) => handleReservationDrop(e, boat, d)}
                             onClick={() => onCreate(boat.id, d)}
                           />
                         ))}
@@ -1186,8 +1357,14 @@ function SpanPlanning(props: Readonly<{
                           return (
                             <div
                               key={`${seg.kind}-${seg.id}`}
-                              className="absolute box-border min-w-0 px-px"
+                              className="pointer-events-auto absolute box-border min-w-0 px-px"
                               style={segStyle}
+                              onDragOver={!ro && seg.kind === 'reservation' ? allowReservationDragOver : undefined}
+                              onDrop={
+                                !ro && seg.kind === 'reservation'
+                                  ? (e) => handleReservationDrop(e, boat, days[seg.startIdx] ?? start)
+                                  : undefined
+                              }
                             >
                               {seg.kind === 'reservation' ? (
                                 <ReservationPill
@@ -1196,7 +1373,11 @@ function SpanPlanning(props: Readonly<{
                                   height={compactBarH}
                                   draggable={!ro && !isReservationLockedFromReservation(seg.r)}
                                   minimal={ownerMinimal}
-                                  neutralStyle={ownerMinimal}
+                                  onMoveDrop={
+                                    !ro
+                                      ? (e) => handleReservationDrop(e, boat, days[seg.startIdx] ?? start)
+                                      : undefined
+                                  }
                                   onClick={openReservation.bind(null, seg.r.id)}
                                   className={[
                                     'pointer-events-auto flex h-full w-full min-w-0 text-left font-semibold text-white shadow-sm',

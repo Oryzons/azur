@@ -291,7 +291,7 @@ export class RefundReceiptService {
   }
 
   private loadLogoSvg(): string {
-    // Les documents clients affichent le nom commercial (company.brandName), pas le logo plateforme Azur.
+    // Les documents clients affichent le nom commercial (company.brandName), pas le logo plateforme Azure.
     return '';
   }
 }

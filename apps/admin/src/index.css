@@ -123,6 +123,216 @@
   }
 }
 
+@keyframes bc-cal-period-from-left {
+  from {
+    opacity: 0;
+    transform: translateX(-16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes bc-cal-period-from-right {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes bc-cal-period-fade {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes bc-cal-planning-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes bc-cal-picker-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes bc-cf-step-forward {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes bc-cf-step-back {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes bc-cf-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes bc-tab-forward {
+  from {
+    opacity: 0;
+    transform: translate3d(32px, 8px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes bc-tab-back {
+  from {
+    opacity: 0;
+    transform: translate3d(-32px, 8px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes bc-page-push {
+  from {
+    opacity: 0;
+    transform: translate3d(100%, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes bc-page-back {
+  from {
+    opacity: 0;
+    transform: translate3d(-18%, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes bc-page-push-up {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 56px, 0) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes bc-page-pop-down {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -40px, 0) scale(1.01);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes bc-page-fade {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes bc-nav-indicator-pop {
+  0% {
+    transform: scale(0.82);
+  }
+  55% {
+    transform: scale(1.08);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes bc-nav-icon-in {
+  from {
+    opacity: 0.35;
+    transform: scale(0.72) rotate(-8deg);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+  }
+}
+
+@keyframes bc-tablet-detail-enter {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes bc-page-content-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 14px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
 @keyframes bc-menu-in {
   from {
     opacity: 0;
@@ -489,6 +699,30 @@
   .bc-animate,
   .bc-skeleton,
   .bc-content-enter,
+  .bc-cal-period-from-left,
+  .bc-cal-period-from-right,
+  .bc-cal-period-fade,
+  .bc-cal-planning-enter,
+  .bc-cal-view-indicator,
+  .bc-menu-enter,
+  .bc-cal-picker-enter,
+  .bc-cf-step-forward,
+  .bc-cf-step-back,
+  .bc-cf-fade-up,
+  .bc-tab-forward,
+  .bc-tab-back,
+  .bc-page-push,
+  .bc-page-back,
+  .bc-page-push-up,
+  .bc-page-pop-down,
+  .bc-page-fade,
+  .bc-page-stagger > *,
+  .bc-tablet-detail-enter,
+  .bc-nav-indicator,
+  .bc-nav-indicator-pop,
+  .bc-nav-icon-active,
+  .bc-nav-icon-idle,
+  .bc-nav-icon-wrap,
   .bc-stagger > * {
     animation: none !important;
     transition: none !important;
@@ -562,6 +796,29 @@
     animation: bc-content-in 360ms cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 
+  .bc-cal-period-from-left {
+    animation: bc-cal-period-from-left 300ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .bc-cal-period-from-right {
+    animation: bc-cal-period-from-right 300ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .bc-cal-period-fade {
+    animation: bc-cal-period-fade 280ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .bc-cal-planning-enter {
+    animation: bc-cal-planning-in 340ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .bc-cal-view-indicator {
+    transition:
+      left 320ms cubic-bezier(0.34, 1.2, 0.64, 1),
+      width 320ms cubic-bezier(0.34, 1.2, 0.64, 1),
+      opacity 200ms ease;
+  }
+
   .bc-skeleton {
     background: linear-gradient(
       90deg,
@@ -610,6 +867,12 @@
     transform: scale(0.98);
   }
 
+  @media (prefers-reduced-motion: reduce) {
+    .bc-interactive:active:not(:disabled) {
+      transform: none;
+    }
+  }
+
   .bc-tour-step-content {
     animation: bc-tour-tooltip-in 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
   }
@@ -644,6 +907,122 @@
 
   .bc-menu-enter {
     animation: bc-menu-in 160ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .bc-cal-picker-enter {
+    animation: bc-cal-picker-in 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    transform-origin: top left;
+  }
+
+  .bc-cf-step-forward {
+    animation: bc-cf-step-forward 380ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .bc-cf-step-back {
+    animation: bc-cf-step-back 380ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .bc-cf-fade-up {
+    animation: bc-cf-fade-up 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .bc-tab-forward {
+    animation: bc-tab-forward 400ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .bc-tab-back {
+    animation: bc-tab-back 400ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .bc-page-push {
+    animation: bc-page-push 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .bc-page-back {
+    animation: bc-page-back 400ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .bc-page-push-up {
+    animation: bc-page-push-up 460ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    transform-origin: center bottom;
+  }
+
+  .bc-page-pop-down {
+    animation: bc-page-pop-down 400ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    transform-origin: center top;
+  }
+
+  .bc-page-fade {
+    animation: bc-page-fade 360ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .bc-page-layer {
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+  }
+
+  .bc-page-stagger > * {
+    animation: bc-page-content-in 480ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .bc-page-stagger > *:nth-child(1) {
+    animation-delay: 40ms;
+  }
+  .bc-page-stagger > *:nth-child(2) {
+    animation-delay: 80ms;
+  }
+  .bc-page-stagger > *:nth-child(3) {
+    animation-delay: 120ms;
+  }
+  .bc-page-stagger > *:nth-child(4) {
+    animation-delay: 160ms;
+  }
+  .bc-page-stagger > *:nth-child(5) {
+    animation-delay: 200ms;
+  }
+  .bc-page-stagger > *:nth-child(6) {
+    animation-delay: 240ms;
+  }
+
+  .bc-tablet-detail-enter {
+    animation: bc-tablet-detail-enter 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .bc-nav-indicator {
+    transition: transform 480ms cubic-bezier(0.34, 1.35, 0.64, 1);
+    will-change: transform;
+  }
+
+  .bc-nav-indicator-pop {
+    animation: bc-nav-indicator-pop 480ms cubic-bezier(0.34, 1.35, 0.64, 1) both;
+    transform-origin: center;
+  }
+
+  .bc-nav-icon-wrap {
+    display: flex;
+    height: 3rem;
+    width: 3rem;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+    transition:
+      transform 320ms cubic-bezier(0.16, 1, 0.3, 1),
+      color 280ms ease;
+  }
+
+  .bc-nav-icon-active {
+    animation: bc-nav-icon-in 380ms cubic-bezier(0.34, 1.25, 0.64, 1) both;
+    color: rgb(24 24 27);
+  }
+
+  .bc-nav-icon-idle {
+    color: rgb(255 255 255 / 0.42);
+    transform: scale(0.92);
+  }
+
+  .bc-nav-item-press .bc-nav-icon-wrap {
+    transform: scale(0.86) !important;
+    transition-duration: 120ms;
   }
 
   .bc-menu-exit {

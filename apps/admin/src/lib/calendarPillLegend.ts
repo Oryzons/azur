@@ -1,6 +1,7 @@
 import { Baby, Coins, FileText, type LucideIcon } from 'lucide-react';
 import { resolveExtraIcon, type ExtraIconKey } from '@bleu-calanque/shared';
 import { EXTRA_ICON_LABELS, extraIconComponent } from '@/lib/extraIcons';
+import { CALENDAR_STATUS_COLORS } from '@/lib/reservationStatus';
 import type { Extra } from '@/stores/extras';
 
 export type CalendarPillLegendItem = {
@@ -33,7 +34,7 @@ export function buildCalendarPillLegend(extrasCatalog: readonly Extra[]): Calend
       key: `extra-${iconKey}`,
       label,
       Icon: extraIconComponent(iconKey),
-      color: '#D97706',
+      color: CALENDAR_STATUS_COLORS.reserved,
     }));
 
   return [...FIXED_LEGEND, ...extraItems];

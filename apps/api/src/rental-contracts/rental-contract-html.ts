@@ -223,8 +223,9 @@ function sigBlock(img: string | null | undefined, label: string, signedAt?: stri
   </div>`;
 }
 
-function contractHeader(c: Company) {
-  return `<header class="doc-header">
+function contractHeader(c: Company, compact = false) {
+  const compactClass = compact ? ' doc-header--compact' : '';
+  return `<header class="doc-header${compactClass}">
     <div class="doc-brand">${esc(c.brandName)}</div>
     <div class="doc-meta">
       <strong>${esc(c.brandName)}</strong><br/>
@@ -234,7 +235,7 @@ function contractHeader(c: Company) {
   </header>`;
 }
 
-function contractFooter(contractNumber: number, page: number, draft?: boolean) {
+function contractFooter(contractNumber: number, page: number, totalPages: number, draft?: boolean) {
   const center = page === 1 ? 'Urgence : Contacter le CROSS au canal 16 sur la radio VHF ou appeler le 196' : '';
   const numLabel = draft
     ? 'Aperçu brouillon'
@@ -243,7 +244,7 @@ function contractFooter(contractNumber: number, page: number, draft?: boolean) {
   return `<footer class="doc-footer">
     <span>${numLabel}${draftSuffix}</span>
     <span class="doc-footer-center">${center}</span>
-    <span>Page ${page}</span>
+    <span>Page ${page} / ${totalPages}</span>
   </footer>`;
 }
 
@@ -274,61 +275,70 @@ function documentChecklistBlock(items: ContractDocumentChecklistItem[]): string 
   </div>`;
 }
 
+const CONTRACT_PAGE_COUNT = 3;
+
 const PAGE_STYLE = `
-  @page { size: A4; margin: 12mm 14mm; }
+  @page { size: A4; margin: 9mm 11mm; }
   * { box-sizing: border-box; }
   body {
     font-family: 'Segoe UI', Arial, Helvetica, sans-serif;
-    font-size: 10.5px;
+    font-size: 9.5px;
     color: #1e293b;
-    line-height: 1.45;
+    line-height: 1.38;
     margin: 0;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
   .page { padding: 0; }
-  .page-break { page-break-before: always; padding-top: 4px; }
+  .page-break { page-break-before: always; padding-top: 2px; }
 
   .doc-header {
     display: table;
     width: 100%;
-    margin-bottom: 14px;
-    padding-bottom: 10px;
+    margin-bottom: 10px;
+    padding-bottom: 7px;
     border-bottom: 2px solid ${BRAND};
+  }
+  .doc-header--compact {
+    margin-bottom: 7px;
+    padding-bottom: 5px;
+    border-bottom-width: 1px;
   }
   .doc-brand {
     display: table-cell;
     vertical-align: middle;
-    font-size: 22px;
+    font-size: 18px;
     font-weight: 700;
     color: ${BRAND};
     letter-spacing: -0.02em;
   }
+  .doc-header--compact .doc-brand { font-size: 14px; }
   .doc-meta {
     display: table-cell;
     vertical-align: middle;
     text-align: right;
-    font-size: 9px;
+    font-size: 8px;
     color: #475569;
-    line-height: 1.5;
+    line-height: 1.4;
   }
+  .doc-header--compact .doc-meta { font-size: 7.5px; }
 
   .intro {
-    margin: 0 0 14px;
-    padding: 10px 12px;
+    margin: 0 0 9px;
+    padding: 7px 9px;
     background: #f8fafc;
     border: 1px solid #e2e8f0;
-    border-radius: 6px;
-    font-size: 10.5px;
-    line-height: 1.55;
+    border-radius: 4px;
+    font-size: 9.5px;
+    line-height: 1.45;
   }
   .intro strong { color: #0f172a; }
 
-  .block { margin-bottom: 12px; page-break-inside: avoid; }
+  .block { margin-bottom: 8px; }
   .block-title {
-    margin: 0 0 8px;
-    padding: 0 0 4px;
-    font-size: 11px;
+    margin: 0 0 5px;
+    padding: 0 0 3px;
+    font-size: 10px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -339,18 +349,18 @@ const PAGE_STYLE = `
   .field-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 6px 20px;
+    gap: 4px 14px;
   }
   .field-label {
-    font-size: 9px;
+    font-size: 8px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.03em;
     color: #64748b;
-    margin-bottom: 1px;
+    margin-bottom: 0;
   }
   .field-value {
-    font-size: 10.5px;
+    font-size: 9.5px;
     font-weight: 600;
     color: #0f172a;
     word-break: break-word;
@@ -358,43 +368,43 @@ const PAGE_STYLE = `
   .empty { color: #94a3b8; font-weight: 400; }
 
   .comment-box {
-    margin-top: 6px;
-    padding: 6px 8px;
+    margin-top: 4px;
+    padding: 5px 7px;
     background: #fafafa;
     border: 1px dashed #e2e8f0;
     border-radius: 4px;
-    font-size: 10px;
+    font-size: 9px;
     color: #475569;
   }
 
   .data-table {
     width: 100%;
     border-collapse: collapse;
-    margin-top: 4px;
-    font-size: 10px;
+    margin-top: 2px;
+    font-size: 9px;
   }
   .data-table thead tr {
     background: #eef4fa;
     border-bottom: 1px solid #94a3b8;
   }
   .data-table th {
-    padding: 6px 8px;
-    font-size: 9px;
+    padding: 4px 6px;
+    font-size: 8px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.03em;
     color: #334155;
   }
   .data-table td {
-    padding: 5px 8px;
+    padding: 3px 6px;
     border-bottom: 1px solid #e2e8f0;
     vertical-align: middle;
   }
   .data-table tbody tr:last-child td { border-bottom: none; }
   .data-table tfoot .total-row td {
-    padding: 7px 8px;
+    padding: 5px 6px;
     font-weight: 700;
-    font-size: 10.5px;
+    font-size: 9.5px;
     background: #f1f5f9;
     border-top: 2px solid #334155;
     border-bottom: none;
@@ -406,7 +416,7 @@ const PAGE_STYLE = `
   .signatures {
     display: table;
     width: 100%;
-    margin-top: 16px;
+    margin-top: 10px;
     page-break-inside: avoid;
   }
   .sig-row { display: table-row; }
@@ -414,98 +424,108 @@ const PAGE_STYLE = `
     display: table-cell;
     width: 50%;
     vertical-align: top;
-    padding-right: 12px;
+    padding-right: 10px;
   }
-  .sig-col:last-child { padding-right: 0; padding-left: 12px; }
+  .sig-col:last-child { padding-right: 0; padding-left: 10px; }
   .sig-label {
-    margin: 0 0 6px;
-    font-size: 10px;
+    margin: 0 0 4px;
+    font-size: 9px;
     font-weight: 700;
     color: #334155;
   }
   .sig-box {
-    height: 88px;
+    height: 62px;
     border: 1px solid #94a3b8;
-    border-radius: 6px;
+    border-radius: 4px;
     background: #fff;
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 8px;
+    padding: 5px;
     overflow: hidden;
   }
-  .sig-img { max-height: 72px; max-width: 100%; object-fit: contain; }
+  .sig-img { max-height: 52px; max-width: 100%; object-fit: contain; }
   .sig-date {
-    margin: 6px 0 0;
-    font-size: 9px;
+    margin: 4px 0 0;
+    font-size: 8px;
     color: #64748b;
-    min-height: 12px;
+    min-height: 10px;
   }
   .sig-date--empty { visibility: hidden; }
 
   .doc-footer {
     display: table;
     width: 100%;
-    margin-top: 18px;
-    padding-top: 8px;
+    margin-top: 10px;
+    padding-top: 6px;
     border-top: 1px solid #cbd5e1;
-    font-size: 8.5px;
+    font-size: 8px;
     color: #64748b;
   }
   .doc-footer span { display: table-cell; vertical-align: middle; }
   .doc-footer span:last-child { text-align: right; }
-  .doc-footer-center { text-align: center; padding: 0 8px; }
+  .doc-footer-center { text-align: center; padding: 0 6px; }
 
   .cgv-title {
-    margin: 0 0 12px;
-    font-size: 14px;
+    margin: 0 0 8px;
+    font-size: 12px;
     font-weight: 700;
     color: #0f172a;
     text-decoration: underline;
   }
-  .cgv-body { font-size: 10px; line-height: 1.5; color: #334155; }
+  .cgv-body {
+    font-size: 8.25px;
+    line-height: 1.32;
+    color: #334155;
+    column-count: 2;
+    column-gap: 12px;
+  }
   .cgv-body h3 {
-    margin: 14px 0 6px;
-    font-size: 10.5px;
+    margin: 10px 0 4px;
+    font-size: 9px;
     font-weight: 700;
     color: ${BRAND};
   }
   .cgv-body h3:first-child { margin-top: 0; }
-  .cgv-section { margin-bottom: 10px; page-break-inside: avoid; }
+  .cgv-section {
+    margin-bottom: 6px;
+    break-inside: avoid-column;
+    page-break-inside: avoid;
+  }
   .cgv-section h3 {
-    margin: 0 0 4px;
-    font-size: 10px;
+    margin: 0 0 3px;
+    font-size: 8.5px;
     font-weight: 700;
     color: ${BRAND};
   }
-  .cgv-section p { margin: 0 0 6px; text-align: justify; }
+  .cgv-section p { margin: 0 0 4px; text-align: justify; }
   .cgv-list {
-    margin: 4px 0 8px 16px;
+    margin: 2px 0 4px 14px;
     padding: 0;
   }
-  .cgv-list li { margin-bottom: 3px; }
-  .signatures--compact { margin-top: 12px; }
-  .signatures--compact .sig-box { height: 72px; }
+  .cgv-list li { margin-bottom: 2px; }
+  .signatures--compact { margin-top: 8px; }
+  .signatures--compact .sig-box { height: 56px; }
 
   .contract-doc-title {
-    margin: 0 0 10px;
-    font-size: 15px;
+    margin: 0 0 7px;
+    font-size: 13px;
     font-weight: 700;
     color: #0f172a;
     text-align: center;
     line-height: 1.35;
   }
   .required-docs {
-    margin-bottom: 12px;
-    padding: 8px 10px;
+    margin-bottom: 8px;
+    padding: 6px 8px;
     background: #f8fafc;
     border: 1px solid #e2e8f0;
-    border-radius: 6px;
-    font-size: 10px;
+    border-radius: 4px;
+    font-size: 9px;
   }
   .required-docs-title {
-    margin: 0 0 6px;
-    font-size: 9px;
+    margin: 0 0 4px;
+    font-size: 8px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -515,16 +535,16 @@ const PAGE_STYLE = `
     margin: 0;
     padding-left: 16px;
   }
-  .required-docs li { margin-bottom: 2px; color: #334155; }
+  .required-docs li { margin-bottom: 1px; color: #334155; }
   .doc-checklist {
     width: 100%;
     border-collapse: collapse;
-    font-size: 10px;
+    font-size: 9px;
   }
   .doc-checklist th,
   .doc-checklist td {
     border: 1px solid #e2e8f0;
-    padding: 5px 8px;
+    padding: 3px 6px;
     text-align: left;
     vertical-align: top;
   }
@@ -537,21 +557,21 @@ const PAGE_STYLE = `
   .doc-status--missing { color: #b45309; }
   .doc-detail {
     display: block;
-    margin-top: 2px;
-    font-size: 9px;
+    margin-top: 1px;
+    font-size: 8px;
     font-weight: 400;
     color: #64748b;
   }
 
   body.draft { position: relative; }
   .draft-banner {
-    margin: 0 0 12px;
-    padding: 8px 12px;
+    margin: 0 0 8px;
+    padding: 6px 10px;
     background: #fffbeb;
     border: 1px solid #f59e0b;
-    border-radius: 6px;
+    border-radius: 4px;
     text-align: center;
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 700;
     letter-spacing: 0.05em;
     text-transform: uppercase;
@@ -620,8 +640,10 @@ export function buildRentalContractHtml(
 ): string {
   const draft = Boolean(options?.draft);
   const c = vm.company;
-  const header = contractHeader(c);
+  const headerFull = contractHeader(c);
+  const headerCompact = contractHeader(c, true);
   const draftBlock = draft ? draftBanner() : '';
+  const totalPages = CONTRACT_PAGE_COUNT;
 
   const pricingBody = vm.pricingLines.map((l) => [
     esc(l.description),
@@ -664,8 +686,24 @@ export function buildRentalContractHtml(
   const docTitle = `<h1 class="contract-doc-title">${esc(vm.documentTitle)}</h1>`;
   const requiredDocs = documentChecklistBlock(vm.documentChecklist);
 
+  const locationSection = section(
+    'Location',
+    [
+      fieldCell('Lieu de départ', vm.location.departurePlace, 2),
+      fieldCell('Date et heure de départ', vm.location.startAt, 2),
+      fieldCell("Lieu d'arrivée (retour)", vm.location.arrivalPlace, 2),
+      fieldCell('Date et heure de retour', vm.location.endAt, 2),
+      fieldCell('Type de location', vm.location.type),
+      fieldCell('Passagers', vm.location.passengers),
+      fieldCell('Prix total (sans extras)', vm.location.priceWithoutExtras),
+    ].join('') +
+      (vm.location.comment.trim()
+        ? `<div class="comment-box"><span class="field-label">Commentaire</span><br/>${esc(vm.location.comment)}</div>`
+        : ''),
+  );
+
   const page1 = `<div class="page">
-    ${header}
+    ${headerFull}
     ${draftBlock}
     ${docTitle}
     ${requiredDocs}
@@ -715,21 +753,14 @@ export function buildRentalContractHtml(
       ].join(''),
     )}
 
-    ${section(
-      'Location',
-      [
-        fieldCell('Lieu de départ', vm.location.departurePlace, 2),
-        fieldCell('Date et heure de départ', vm.location.startAt, 2),
-        fieldCell('Lieu d\'arrivée (retour)', vm.location.arrivalPlace, 2),
-        fieldCell('Date et heure de retour', vm.location.endAt, 2),
-        fieldCell('Type de location', vm.location.type),
-        fieldCell('Passagers', vm.location.passengers),
-        fieldCell('Prix total (sans extras)', vm.location.priceWithoutExtras),
-      ].join('') +
-        (vm.location.comment.trim()
-          ? `<div class="comment-box"><span class="field-label">Commentaire</span><br/>${esc(vm.location.comment)}</div>`
-          : ''),
-    )}
+    ${contractFooter(vm.contractNumber, 1, totalPages, draft)}
+  </div>`;
+
+  const page2 = `<div class="page page-break">
+    ${headerCompact}
+    ${draftBlock}
+
+    ${locationSection}
 
     <section class="block">
       <h2 class="block-title">Tarif</h2>
@@ -743,12 +774,12 @@ export function buildRentalContractHtml(
 
     ${signatureRow(vm)}
 
-    ${contractFooter(vm.contractNumber, 1, draft)}
+    ${contractFooter(vm.contractNumber, 2, totalPages, draft)}
   </div>`;
 
   const cgvSections = resolveCgvSections(vm.template, c.brandName || vm.introLegalName);
-  const page2 = `<div class="page page-break">
-    ${header}
+  const page3 = `<div class="page page-break">
+    ${headerCompact}
     ${draftBlock}
     ${docTitle}
     <h1 class="cgv-title">Conditions générales de location</h1>
@@ -756,7 +787,7 @@ export function buildRentalContractHtml(
       ${renderCgvSections(cgvSections)}
     </div>
     ${signatureRow(vm)}
-    ${contractFooter(vm.contractNumber, 2, draft)}
+    ${contractFooter(vm.contractNumber, 3, totalPages, draft)}
   </div>`;
 
   const title = draft ? `Aperçu contrat${vm.contractNumber ? ` ${vm.contractNumber}` : ''}` : `Contrat ${vm.contractNumber}`;
@@ -769,6 +800,6 @@ export function buildRentalContractHtml(
   <title>${esc(title)}</title>
   <style>${PAGE_STYLE}</style>
 </head>
-<body${bodyClass}>${page1}${page2}</body>
+<body${bodyClass}>${page1}${page2}${page3}</body>
 </html>`;
 }

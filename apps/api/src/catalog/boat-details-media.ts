@@ -1,4 +1,5 @@
 import type { SecureMediaService } from '../common/media/secure-media.service';
+import { formatBoatEmplacementInput } from '@bleu-calanque/shared';
 
 type LegalDoc = { fileUrl?: string | null; [key: string]: unknown };
 
@@ -56,7 +57,21 @@ export async function processBoatDetailsJson(
   }
 
   const legalite = parsed.legalite;
-  if (!legalite || typeof legalite !== 'object') return detailsJson;
+  const generales = parsed.generales;
+  if (generales && typeof generales === 'object') {
+    const raw =
+      typeof (generales as { emplacement?: unknown }).emplacement === 'string'
+        ? (generales as { emplacement: string }).emplacement
+        : '';
+    parsed.generales = {
+      ...(generales as Record<string, unknown>),
+      emplacement: formatBoatEmplacementInput(raw),
+    };
+  }
+
+  if (!legalite || typeof legalite !== 'object') {
+    return JSON.stringify(parsed);
+  }
 
   const existingLegalite = parseLegalite(existingDetailsJson);
   const nextLegalite: BoatLegaliteJson = { ...(legalite as BoatLegaliteJson) };

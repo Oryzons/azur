@@ -5,13 +5,10 @@ import {
   Building2,
   ClipboardCheck,
   FileText,
-  Globe,
   Handshake,
-  Landmark,
   Link2,
   Mail,
 } from 'lucide-react';
-import { BankSettingsTab } from '@/pages/parametres/BankSettingsTab';
 import { BookingSettingsTab } from '@/pages/parametres/BookingSettingsTab';
 import { CheckFlowSettingsTab } from '@/pages/parametres/CheckFlowSettingsTab';
 import { ContratsSettingsTab } from '@/pages/parametres/ContratsSettingsTab';
@@ -20,7 +17,6 @@ import { NauticManagerSettingsTab } from '@/pages/parametres/NauticManagerSettin
 import { NotificationsSettingsTab } from '@/pages/parametres/NotificationsSettingsTab';
 import { PartnersSettingsTab } from '@/pages/parametres/PartnersSettingsTab';
 import { PeriodesSettingsTab } from '@/pages/parametres/PeriodesSettingsTab';
-import { SeoSettingsTab } from '@/pages/parametres/SeoSettingsTab';
 import { SocieteSettingsTab } from '@/pages/parametres/SocieteSettingsTab';
 import { useSettingsStore } from '@/stores/settings';
 import { useDefaultPageFilters } from '@/contexts/PageFiltersContext';
@@ -33,9 +29,7 @@ type TabId =
   | 'contrats'
   | 'partenaires'
   | 'booking'
-  | 'bank'
-  | 'emails'
-  | 'seo'
+  | 'messaging'
   | 'nauticManager'
   | 'notifications'
   | 'checkflow';
@@ -89,9 +83,7 @@ export function ParametresPage() {
         { id: 'contrats' as const, label: 'Contrats', Icon: FileText },
         { id: 'partenaires' as const, label: 'Partenaires', Icon: Handshake },
         { id: 'booking' as const, label: 'Réservations', Icon: Anchor },
-        { id: 'bank' as const, label: 'Banque', Icon: Landmark },
-        { id: 'emails' as const, label: 'E-mails', Icon: Mail },
-        { id: 'seo' as const, label: 'SEO', Icon: Globe },
+        { id: 'messaging' as const, label: 'E-mails', Icon: Mail },
         { id: 'nauticManager' as const, label: 'Nautic Manager', Icon: Link2 },
         { id: 'notifications' as const, label: 'Notifications', Icon: Bell },
         { id: 'checkflow' as const, label: 'Check-in/out', Icon: ClipboardCheck },
@@ -136,9 +128,7 @@ export function ParametresPage() {
           {tab === 'contrats' ? <ContratsSettingsTab /> : null}
           {tab === 'partenaires' ? <PartnersSettingsTab /> : null}
           {tab === 'booking' ? <BookingSettingsTab /> : null}
-          {tab === 'bank' ? <BankSettingsTab /> : null}
-          {tab === 'emails' ? <EmailsSettingsTab /> : null}
-          {tab === 'seo' ? <SeoSettingsTab /> : null}
+          {tab === 'messaging' ? <EmailsSettingsTab /> : null}
           {tab === 'nauticManager' ? <NauticManagerSettingsTab /> : null}
         </TabSection>
       ) : null}

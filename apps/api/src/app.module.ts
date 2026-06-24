@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
+import { ServeStaticModule } from '@nestjs/serve-static';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { join } from 'node:path';
 import { validateEnv } from './config/env';
@@ -22,10 +23,25 @@ import { InternalNotificationsModule } from './internal-notifications/internal-n
 import { NotificationsModule } from './notifications/notifications.module';
 import { OwnerScopeModule } from './common/auth/owner-scope.module';
 import { BoatUnavailabilitiesModule } from './boat-unavailabilities/boat-unavailabilities.module';
+import { ExtraRentalsModule } from './extra-rentals/extra-rentals.module';
 import { RentalContractsModule } from './rental-contracts/rental-contracts.module';
+
+const adminDistPath = join(__dirname, '..', '..', 'admin', 'dist');
+const productionStaticModules =
+  process.env.NODE_ENV === 'production'
+    ? [
+        ServeStaticModule.forRoot({
+          rootPath: adminDistPath,
+          exclude: ['/api/v1/(.*)'],
+          serveRoot: '/',
+          renderPath: '/*',
+        }),
+      ]
+    : [];
 
 @Module({
   imports: [
+    ...productionStaticModules,
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: join(__dirname, '..', '.env'),
@@ -58,6 +74,7 @@ import { RentalContractsModule } from './rental-contracts/rental-contracts.modul
     SettingsModule,
     ReservationsModule,
     BoatUnavailabilitiesModule,
+    ExtraRentalsModule,
     InternalNotificationsModule,
     NotificationsModule,
     RentalContractsModule,

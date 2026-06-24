@@ -24,6 +24,7 @@ export const AuditEntity = {
   MEMBER: 'member',
   ANNOUNCEMENT: 'announcement',
   EXTRA: 'extra',
+  EXTRA_RENTAL: 'extra_rental',
   COUPON: 'coupon',
   COUPON_REDEMPTION: 'coupon_redemption',
   PRICING_PERIOD: 'pricing_period',

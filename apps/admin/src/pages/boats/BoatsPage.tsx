@@ -1,3 +1,4 @@
+import { formatBoatEmplacementInput } from '@bleu-calanque/shared';
 import { useEffect, useMemo, useState } from 'react';
 import { Plus, Search, Ship, Tags, X, Trash2, Pencil } from 'lucide-react';
 import { usePresence } from '@/lib/presence';
@@ -768,6 +769,7 @@ function boatExtraDetailRows(boat: Boat): { label: string; value: string }[] {
     if (v) rows.push({ label, value: v });
   };
   push('Immatriculation', d.generales.registrationNumber);
+  push('Emplacement', d.generales.emplacement);
   push('Zone de navigation', d.generales.authorizedNavigationZone);
   push('Année de construction', d.generales.constructionYear);
   push('Année de rénovation', d.generales.renovationYear);
@@ -944,7 +946,7 @@ function ExtraInfoPanel(props: ExtraInfoPanelProps) {
               value={boatName}
               onChange={(e) => setBoatName(e.target.value)}
               className={inputBase()}
-              placeholder="Ex: Azur I"
+              placeholder="Ex: Azure I"
             />
           </label>
           <label className="block">
@@ -957,6 +959,28 @@ function ExtraInfoPanel(props: ExtraInfoPanelProps) {
               className={inputBase()}
               placeholder="Ex. FR-1234567"
             />
+          </label>
+          <label className="block">
+            <FieldLabel>Emplacement</FieldLabel>
+            <input
+              value={extra.generales.emplacement}
+              onChange={(e) =>
+                setExtra((p) => ({
+                  ...p,
+                  generales: {
+                    ...p.generales,
+                    emplacement: formatBoatEmplacementInput(e.target.value),
+                  },
+                }))
+              }
+              className={inputBase()}
+              placeholder="Ex. A45, C123"
+              maxLength={4}
+              autoCapitalize="characters"
+              spellCheck={false}
+              title="Une lettre suivie de 1 à 3 chiffres"
+            />
+            <p className="mt-1 text-[11px] text-zinc-500">Lettre + 1 à 3 chiffres (quai / ponton).</p>
           </label>
           <label className="block">
             <FieldLabel>Marque</FieldLabel>
@@ -1271,7 +1295,7 @@ function BoatEditorModal(props: BoatEditorModalProps) {
               </label>
               <label className="block">
                 <FieldLabel>Nom du bateau</FieldLabel>
-                <input value={name} onChange={(e) => setName(e.target.value)} className={inputBase()} placeholder="Ex: Azur I" />
+                <input value={name} onChange={(e) => setName(e.target.value)} className={inputBase()} placeholder="Ex: Azure I" />
               </label>
               <label className="block sm:col-span-2">
                 <FieldLabel>Modèle</FieldLabel>

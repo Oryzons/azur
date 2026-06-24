@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { CHECK_FLOW_SUBMIT_GRACE_DAYS } from '@/lib/checkFlowTabletAccess';
 import { answersFromSubmission } from '@/lib/checkFlowFormPrefill';
 import { isQuestionStepComplete } from '@/lib/checkFlowPhotoGuide';
 import { TabletSubmissionDetail } from '@/components/tablet/TabletSubmissionDetail';
 import { TabletCheckFlowStep, TabletCheckFlowSignatures } from '@/components/tablet/TabletCheckFlowStep';
+import { TabletCheckFlowStepTransition } from '@/components/tablet/TabletCheckFlowStepTransition';
 import {
   useCheckFlowStore,
   type CheckFlowKind,
@@ -13,7 +14,7 @@ import {
   type CheckFlowSubmissionSummary,
 } from '@/stores/checkFlow';
 import { dispatchTabletCalendarRefresh } from '@/lib/tabletRealtime';
-import { TB } from '@/lib/tabletTheme';
+import { CF, type CfStepDirection } from '@/lib/tabletCheckFlowTheme';
 import { extractApiErrorMessage } from '@/lib/apiError';
 import { fileToCompressedDataUrl } from '@/lib/mediaPhotos';
 
@@ -22,7 +23,9 @@ const KIND_LABEL: Record<CheckFlowKind, string> = {
   CHECK_OUT: 'Check-out',
 };
 
-type Screen = 'loading' | 'choose' | 'edit' | 'submit' | 'view' | 'expired';
+const WIZARD_FORM_ID = 'tablet-check-flow-wizard';
+
+type Screen = 'loading' | 'choose' | 'edit' | 'submit' | 'view' | 'expired' | 'payment_required';
 
 export function TabletCheckFlowPage() {
   const { reservationId } = useParams<{ reservationId: string }>();
@@ -52,14 +55,17 @@ export function TabletCheckFlowPage() {
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [stepIndex, setStepIndex] = useState(0);
+  const [stepDirection, setStepDirection] = useState<CfStepDirection>('forward');
 
   const enabledQuestions = questions.filter((q) => q.enabled);
   const stepTotal = enabledQuestions.length + 1;
   const isSignatureStep = stepIndex >= enabledQuestions.length;
   const progressPct = stepTotal > 0 ? Math.round(((stepIndex + 1) / stepTotal) * 100) : 0;
+  const inWizard = screen === 'submit' || screen === 'edit';
 
   useEffect(() => {
     setStepIndex(0);
+    setStepDirection('forward');
   }, [reservationId, kind, screen]);
 
   useEffect(() => {
@@ -105,6 +111,11 @@ export function TabletCheckFlowPage() {
           return;
         }
 
+        if (access.mode === 'payment_required') {
+          if (!cancelled) setScreen('payment_required');
+          return;
+        }
+
         if (!cancelled) setScreen('expired');
       } catch (err) {
         if (!cancelled) {
@@ -145,6 +156,7 @@ export function TabletCheckFlowPage() {
     setLoueurSignature(row.agentSignatureUrl ?? null);
     setEditingId(row.id);
     setStepIndex(0);
+    setStepDirection('forward');
     setScreen('edit');
     setError('');
   }
@@ -162,12 +174,18 @@ export function TabletCheckFlowPage() {
       return;
     }
     setError('');
-    if (stepIndex < stepTotal - 1) setStepIndex((i) => i + 1);
+    if (stepIndex < stepTotal - 1) {
+      setStepDirection('forward');
+      setStepIndex((i) => i + 1);
+    }
   }
 
   function goPrev() {
     setError('');
-    if (stepIndex > 0) setStepIndex((i) => i - 1);
+    if (stepIndex > 0) {
+      setStepDirection('back');
+      setStepIndex((i) => i - 1);
+    }
   }
 
   async function onSubmit(e: React.FormEvent) {
@@ -219,159 +237,208 @@ export function TabletCheckFlowPage() {
     }
   }
 
+  const stepTransitionKey = isSignatureStep ? 'signatures' : currentQuestion?.id ?? 'step';
+
   return (
-    <div className={TB.page}>
-      <Link to="/tablette/aujourdhui" className={TB.linkBack}>
-        <ArrowLeft className="h-4 w-4" />
-        Retour
-      </Link>
-      <h1 className={`mt-4 ${TB.h1}`}>{KIND_LABEL[kind]}</h1>
+    <div className={CF.screen}>
+      <div className={CF.inner}>
+        {!inWizard ? (
+          <Link to="/tablette/aujourdhui" className={`${CF.btnGhost} -ml-2 mb-2`}>
+            <ArrowLeft className="h-4 w-4" strokeWidth={2} />
+            Retour
+          </Link>
+        ) : null}
 
-      {screen === 'loading' && !error ? (
-        <p className={`mt-6 ${TB.empty}`}>Chargement…</p>
-      ) : null}
-
-      {screen === 'loading' && error ? (
-        <p className={`mt-6 ${TB.error}`}>{error}</p>
-      ) : null}
-
-      {screen === 'choose' && detail ? (
-        <div className="mt-6 space-y-4">
-          <p className="text-sm text-zinc-600">
-            {KIND_LABEL[kind]} effectué aujourd&apos;hui — consultez le résumé ou modifiez le formulaire.
-          </p>
-          <div className="grid gap-3">
-            <button type="button" onClick={() => setScreen('view')} className={TB.btnSecondary}>
-              Voir le résumé
-            </button>
-            <button type="button" onClick={() => enterEdit(detail)} className={TB.btnPrimary}>
-              Modifier
-            </button>
-          </div>
-        </div>
-      ) : null}
-
-      {screen === 'expired' ? (
-        <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-5 text-sm text-amber-950">
-          <p className="font-semibold">Délai dépassé</p>
-          <p className="mt-2 text-amber-900/90">
-            Ce {KIND_LABEL[kind].toLowerCase()} ne peut plus être effectué : plus de{' '}
-            {CHECK_FLOW_SUBMIT_GRACE_DAYS} jours se sont écoulés depuis le{' '}
-            {kind === 'CHECK_IN' ? 'départ' : 'retour'} de la réservation.
-          </p>
-          {error ? <p className={`mt-3 ${TB.error}`}>{error}</p> : null}
-        </div>
-      ) : null}
-
-      {screen === 'view' && detail ? (
-        <div className="mt-6">
-          {allowsChoose ? (
-            <button
-              type="button"
-              onClick={() => setScreen('choose')}
-              className="mb-4 text-sm font-semibold text-[#416B9F] hover:underline"
-            >
-              ← Retour au choix
-            </button>
-          ) : (
-            <p className="mb-4 text-sm text-zinc-500">Consultation seule — formulaire déjà enregistré.</p>
-          )}
-          <TabletSubmissionDetail row={detail} />
-        </div>
-      ) : null}
-
-      {screen === 'view' && !detail && !error ? (
-        <p className={`mt-6 ${TB.empty}`}>Chargement du détail…</p>
-      ) : null}
-
-      {screen === 'view' && error ? (
-        <p className={`mt-6 ${TB.error}`}>{error}</p>
-      ) : null}
-
-      {(screen === 'submit' || screen === 'edit') && enabledQuestions.length === 0 ? (
-        <p className={`mt-6 ${TB.empty}`}>Aucune question configurée. Contactez l’administrateur.</p>
-      ) : null}
-
-      {(screen === 'submit' || screen === 'edit') && enabledQuestions.length > 0 ? (
-        <form onSubmit={(e) => void onSubmit(e)} className="mt-6 space-y-5">
-          {screen === 'edit' ? (
-            <button
-              type="button"
-              onClick={() => setScreen('choose')}
-              className="text-sm font-semibold text-[#7eb3e8] hover:underline"
-            >
-              ← Annuler la modification
-            </button>
-          ) : null}
-
-          <div className="rounded-2xl bg-white/80 px-4 py-3 shadow-sm ring-1 ring-zinc-200/80 backdrop-blur-sm">
-            <div className="flex items-center justify-between text-xs font-semibold text-zinc-600">
-              <span>Parcours guidé</span>
-              <span className="tabular-nums text-sky-700">{progressPct} %</span>
+        {inWizard ? (
+          <div className="mb-6 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <p className={CF.stepMeta}>{KIND_LABEL[kind]}</p>
+              <p className={`${CF.stepMeta} tabular-nums`}>{progressPct}%</p>
             </div>
-            <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-zinc-100">
-              <div
-                className="h-full rounded-full bg-gradient-to-r from-sky-500 to-sky-700 transition-[width] duration-500 ease-out"
-                style={{ width: `${progressPct}%` }}
-              />
+            <div className={CF.progressTrack}>
+              <div className={CF.progressFill} style={{ width: `${progressPct}%` }} />
             </div>
           </div>
+        ) : (
+          <header className="bc-cf-fade-up mb-6">
+            <h1 className={CF.title}>{KIND_LABEL[kind]}</h1>
+          </header>
+        )}
 
-          {error ? <p className={TB.error}>{error}</p> : null}
+        {screen === 'loading' && !error ? (
+          <div className="bc-cf-fade-up flex flex-col items-center justify-center gap-3 py-16 text-zinc-500">
+            <Loader2 className="h-8 w-8 animate-spin text-zinc-400" aria-hidden />
+            <p className="text-sm font-medium">Chargement…</p>
+          </div>
+        ) : null}
 
-          {!isSignatureStep && currentQuestion ? (
-            <TabletCheckFlowStep
-              key={currentQuestion.id}
-              q={currentQuestion}
-              value={answers[currentQuestion.id]}
-              onText={(t) => setText(currentQuestion.id, t)}
-              onComment={(c) => setComment(currentQuestion.id, c)}
-              onPhoto={(f) => void addPhoto(currentQuestion, f)}
-              stepIndex={stepIndex}
-              stepTotal={stepTotal}
-            />
-          ) : (
-            <TabletCheckFlowSignatures
-              kind={kind}
-              clientSignature={clientSignature}
-              loueurSignature={loueurSignature}
-              onClientChange={setClientSignature}
-              onLoueurChange={setLoueurSignature}
-              stepIndex={stepIndex}
-              stepTotal={stepTotal}
-            />
-          )}
+        {screen === 'loading' && error ? (
+          <p className={`bc-cf-fade-up ${CF.error}`}>{error}</p>
+        ) : null}
 
-          <div className="flex gap-2">
-            {stepIndex > 0 ? (
-              <button type="button" onClick={goPrev} className={`flex-1 ${TB.btnSecondary} inline-flex items-center justify-center gap-1`}>
-                <ChevronLeft className="h-4 w-4" aria-hidden />
-                Précédent
+        {screen === 'choose' && detail ? (
+          <div className="bc-cf-fade-up space-y-5">
+            <div className={CF.card}>
+              <p className={CF.label}>Déjà enregistré</p>
+              <p className={`mt-2 ${CF.subtitle}`}>
+                Ce {KIND_LABEL[kind].toLowerCase()} a été effectué aujourd&apos;hui. Consultez le
+                résumé ou modifiez le formulaire.
+              </p>
+            </div>
+            <div className="grid gap-3">
+              <button type="button" onClick={() => setScreen('view')} className={CF.btnSecondary}>
+                Voir le résumé
+              </button>
+              <button type="button" onClick={() => enterEdit(detail)} className={CF.btnPrimary}>
+                Modifier
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {screen === 'expired' ? (
+          <div className={`bc-cf-fade-up ${CF.card}`}>
+            <p className={CF.label}>Indisponible</p>
+            <h2 className="mt-2 text-lg font-bold text-zinc-900">Délai dépassé</h2>
+            <p className={`mt-2 ${CF.subtitle}`}>
+              Ce {KIND_LABEL[kind].toLowerCase()} ne peut plus être effectué : plus de{' '}
+              {CHECK_FLOW_SUBMIT_GRACE_DAYS} jours se sont écoulés depuis le{' '}
+              {kind === 'CHECK_IN' ? 'départ' : 'retour'} de la réservation.
+            </p>
+            {error ? <p className={`mt-4 ${CF.error}`}>{error}</p> : null}
+          </div>
+        ) : null}
+
+        {screen === 'payment_required' ? (
+          <div className={`bc-cf-fade-up ${CF.card}`}>
+            <p className={CF.label}>Indisponible</p>
+            <h2 className="mt-2 text-lg font-bold text-zinc-900">Paiement requis</h2>
+            <p className={`mt-2 ${CF.subtitle}`}>
+              Le {KIND_LABEL[kind].toLowerCase()} n&apos;est accessible que lorsque la réservation est
+              marquée comme payée ou payée partiellement.
+            </p>
+            {error ? <p className={`mt-4 ${CF.error}`}>{error}</p> : null}
+          </div>
+        ) : null}
+
+        {screen === 'view' && detail ? (
+          <div className="bc-cf-fade-up space-y-4">
+            {allowsChoose ? (
+              <button
+                type="button"
+                onClick={() => setScreen('choose')}
+                className={`${CF.btnGhost} -ml-2`}
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Retour au choix
               </button>
             ) : (
-              <div className="flex-1" />
+              <p className={`${CF.subtitle} px-1`}>Consultation seule — formulaire déjà enregistré.</p>
             )}
+            <TabletSubmissionDetail row={detail} />
+          </div>
+        ) : null}
+
+        {screen === 'view' && !detail && !error ? (
+          <div className="flex justify-center py-16">
+            <Loader2 className="h-8 w-8 animate-spin text-zinc-400" aria-hidden />
+          </div>
+        ) : null}
+
+        {screen === 'view' && error ? <p className={CF.error}>{error}</p> : null}
+
+        {(screen === 'submit' || screen === 'edit') && enabledQuestions.length === 0 ? (
+          <p className="bc-cf-fade-up text-center text-sm text-zinc-500">
+            Aucune question configurée. Contactez l&apos;administrateur.
+          </p>
+        ) : null}
+
+        {(screen === 'submit' || screen === 'edit') && enabledQuestions.length > 0 ? (
+          <form id={WIZARD_FORM_ID} onSubmit={(e) => void onSubmit(e)} className="space-y-4">
+            {screen === 'edit' ? (
+              <button
+                type="button"
+                onClick={() => setScreen('choose')}
+                className={`${CF.btnGhost} -ml-2`}
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Annuler
+              </button>
+            ) : null}
+
+            {error ? <p className={CF.error}>{error}</p> : null}
+
+            <TabletCheckFlowStepTransition stepKey={stepTransitionKey} direction={stepDirection}>
+              {!isSignatureStep && currentQuestion ? (
+                <TabletCheckFlowStep
+                  q={currentQuestion}
+                  value={answers[currentQuestion.id]}
+                  onText={(t) => setText(currentQuestion.id, t)}
+                  onComment={(c) => setComment(currentQuestion.id, c)}
+                  onPhoto={(f) => void addPhoto(currentQuestion, f)}
+                  stepIndex={stepIndex}
+                  stepTotal={stepTotal}
+                />
+              ) : (
+                <TabletCheckFlowSignatures
+                  kind={kind}
+                  clientSignature={clientSignature}
+                  loueurSignature={loueurSignature}
+                  onClientChange={setClientSignature}
+                  onLoueurChange={setLoueurSignature}
+                  stepIndex={stepIndex}
+                  stepTotal={stepTotal}
+                />
+              )}
+            </TabletCheckFlowStepTransition>
+          </form>
+        ) : null}
+      </div>
+
+      {inWizard && enabledQuestions.length > 0 ? (
+        <div className={CF.footer}>
+          <div className="mx-auto flex w-full max-w-lg items-center gap-2">
+            {stepIndex > 0 ? (
+              <button
+                type="button"
+                onClick={goPrev}
+                className={`${CF.btnSecondary} !w-auto shrink-0 !px-5`}
+                aria-label="Étape précédente"
+              >
+                <ChevronLeft className="h-5 w-5" />
+              </button>
+            ) : null}
             {stepIndex < stepTotal - 1 ? (
               <button
                 type="button"
                 onClick={goNext}
                 disabled={!currentStepComplete}
-                className={`flex-1 ${TB.btnPrimary} inline-flex items-center justify-center gap-1 disabled:opacity-50`}
+                className={`${CF.btnPrimary} flex-1`}
               >
-                Suivant
-                <ChevronRight className="h-4 w-4" aria-hidden />
+                Continuer
+                <ChevronRight className="h-4 w-4" strokeWidth={2.25} />
               </button>
             ) : (
-              <button type="submit" disabled={saving || !currentStepComplete} className={`flex-1 ${TB.btnPrimary} disabled:opacity-50`}>
-                {saving
-                  ? 'Enregistrement…'
-                  : screen === 'edit'
-                    ? 'Enregistrer les modifications'
-                    : 'Valider le check'}
+              <button
+                type="submit"
+                form={WIZARD_FORM_ID}
+                disabled={saving || !currentStepComplete}
+                className={`${CF.btnPrimary} flex-1`}
+              >
+                {saving ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                    Enregistrement…
+                  </>
+                ) : screen === 'edit' ? (
+                  'Enregistrer'
+                ) : (
+                  'Valider'
+                )}
               </button>
             )}
           </div>
-        </form>
+        </div>
       ) : null}
     </div>
   );

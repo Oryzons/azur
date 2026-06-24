@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
-import { AnimatedNumber } from '@/components/AnimatedNumber';
+import { FluidInlineAmount } from '@/components/ui/FluidInlineAmount';
 import { euro } from '@/pages/finances/pricingTotals';
 
 type KpiItem = {
@@ -38,7 +38,7 @@ export function DashboardKpiStrip(props: Readonly<{ items: KpiItem[] }>) {
           return (
             <div
               key={item.label}
-              className={['rounded-2xl border p-4 shadow-sm', toneStyles[tone]].join(' ')}
+              className={['min-w-0 rounded-2xl border p-4 shadow-sm', toneStyles[tone]].join(' ')}
             >
               <div className="flex items-start justify-between gap-2">
                 <span className={['flex h-9 w-9 shrink-0 items-center justify-center rounded-xl', iconToneStyles[tone]].join(' ')}>
@@ -46,9 +46,11 @@ export function DashboardKpiStrip(props: Readonly<{ items: KpiItem[] }>) {
                 </span>
               </div>
               <p className="mt-3 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">{item.label}</p>
-              <p className="mt-1 text-2xl font-bold tabular-nums tracking-tight text-zinc-900">
-                <AnimatedNumber value={item.value} format={fmt} />
-              </p>
+              <FluidInlineAmount
+                className="mt-1"
+                value={item.value}
+                format={fmt}
+              />
               <p className="mt-1 text-[11px] leading-snug text-zinc-500">{item.hint}</p>
             </div>
           );

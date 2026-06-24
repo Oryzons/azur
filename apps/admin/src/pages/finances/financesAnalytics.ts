@@ -1,6 +1,6 @@
 import { pad2, startOfDay } from '@/pages/calendar/calendarConstants';
 import type { Reservation } from '@/pages/calendar/reservationTypes';
-import { resolveReservationStatus, statusLabel, type ReservationStatus } from '@/lib/reservationStatus';
+import { CALENDAR_STATUS_COLORS, resolveReservationStatus, statusLabel, type ReservationStatus } from '@/lib/reservationStatus';
 import { computeReservationPricingBreakdown, euro, type PricingBreakdown } from './pricingTotals';
 import type { Coupon } from '@/stores/coupons';
 import type { Extra } from '@/stores/extras';
@@ -59,11 +59,11 @@ export const PAYMENT_METHOD_COLORS: Record<PaymentMethodKey, string> = {
 };
 
 const STATUS_COLORS: Record<ReservationStatus, string> = {
-  pending_payment: '#FDBA74',
-  reserved_paid: '#2563EB',
-  cancelled: '#DC2626',
-  refunded: '#4F46E5',
-  partially_refunded: '#C026D3',
+  pending_payment: CALENDAR_STATUS_COLORS.pending_payment,
+  reserved_paid: CALENDAR_STATUS_COLORS.reserved,
+  cancelled: CALENDAR_STATUS_COLORS.cancelled,
+  refunded: CALENDAR_STATUS_COLORS.refunded,
+  partially_refunded: CALENDAR_STATUS_COLORS.partially_refunded,
 };
 
 export type ReservationFinanceRow = {

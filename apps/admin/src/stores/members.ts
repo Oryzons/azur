@@ -55,8 +55,12 @@ export type MemberClient = MemberBase & {
   postalCode?: string | null;
   country?: string | null;
   internalNote?: string | null;
+  clientIdType?: string | null;
   clientIdNumber?: string | null;
+  licenseType?: string | null;
   licenseNumber?: string | null;
+  licenseCountry?: string | null;
+  licenseYear?: string | null;
   cniFrontUrl?: string | null;
   cniBackUrl?: string | null;
   boatLicenseFrontUrl?: string | null;
@@ -249,8 +253,12 @@ function memberToApiPayload(m: any) {
     base.postalCode = m.postalCode ?? null;
     base.country = m.country ?? null;
     base.internalNote = m.internalNote ?? null;
+    base.clientIdType = m.clientIdType?.trim() || null;
     base.clientIdNumber = m.clientIdNumber?.trim() || null;
+    base.licenseType = m.licenseType?.trim() || null;
     base.licenseNumber = m.licenseNumber?.trim() || null;
+    base.licenseCountry = m.licenseCountry?.trim() || null;
+    base.licenseYear = m.licenseYear?.trim() || null;
     base.cniFrontUrl = m.cniFrontUrl ?? null;
     base.cniBackUrl = m.cniBackUrl ?? null;
     base.boatLicenseFrontUrl = m.boatLicenseFrontUrl ?? null;
@@ -308,8 +316,12 @@ function mapMemberFromApi(x: any): Member {
       postalCode: x?.postalCode ?? null,
       country: x?.country ?? null,
       internalNote: x?.internalNote ?? null,
+      clientIdType: x?.clientIdType ?? null,
       clientIdNumber: x?.clientIdNumber ?? null,
+      licenseType: x?.licenseType ?? null,
       licenseNumber: x?.licenseNumber ?? null,
+      licenseCountry: x?.licenseCountry ?? null,
+      licenseYear: x?.licenseYear ?? null,
       cniFrontUrl: x?.cniFrontUrl ?? null,
       cniBackUrl: x?.cniBackUrl ?? null,
       boatLicenseFrontUrl: x?.boatLicenseFrontUrl ?? null,

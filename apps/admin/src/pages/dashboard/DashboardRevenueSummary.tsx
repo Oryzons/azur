@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { BarChart3, Wallet } from 'lucide-react';
-import { AnimatedNumber } from '@/components/AnimatedNumber';
 import { addDays, startOfDay, startOfMonth, startOfWeekMonday } from '@/pages/calendar/calendarConstants';
-import { euro, sumTotals } from '@/pages/finances/pricingTotals';
+import { sumTotals, euro } from '@/pages/finances/pricingTotals';
+import { FluidInlineAmount } from '@/components/ui/FluidInlineAmount';
 import { deserializeReservation, seedDemoReservationsIfEmpty, useReservationsStore } from '@/stores/reservations';
 import { useExtrasStore } from '@/stores/extras';
 import { useCouponsStore } from '@/stores/coupons';
@@ -111,9 +111,12 @@ export function DashboardRevenueSummary() {
       <div className="mt-6 grid gap-6 sm:grid-cols-[1fr_auto] sm:items-end">
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">{RANGE_LABELS[range]}</p>
-          <p className="mt-1 text-4xl font-bold tabular-nums tracking-tight text-zinc-900">
-            <AnimatedNumber value={selected.total} format={(n) => `${euro(n)} €`} />
-          </p>
+          <FluidInlineAmount
+            className="mt-1"
+            textClassName="text-3xl sm:text-4xl"
+            value={selected.total}
+            format={(n) => `${euro(n)} €`}
+          />
         </div>
         <div className="flex gap-4 text-sm">
           <div className="rounded-xl border border-zinc-100 bg-zinc-50/90 px-4 py-3 text-center min-w-[5.5rem]">

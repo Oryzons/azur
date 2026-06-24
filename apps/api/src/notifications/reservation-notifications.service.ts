@@ -20,6 +20,8 @@ import {
 import {
   buildMoveEmailHtml,
   buildMoveEmailText,
+  buildSupplementDueEmailHtml,
+  buildSupplementDueEmailText,
   buildRefundEmailHtml,
   buildRefundEmailText,
   buildStoreCreditEmailHtml,
@@ -464,6 +466,41 @@ export class ReservationNotificationsService {
     return { sent: true };
   }
 
+  async sendSupplementDueEmail(
+    reservationId: string,
+    supplementCents: number,
+    paymentUrl: string | null,
+  ): Promise<{ sent: boolean }> {
+    const reservation = await this.prisma.reservation.findUnique({
+      where: { id: reservationId },
+      include: reservationInclude,
+    });
+    if (!reservation) throw new BadRequestException('Réservation introuvable.');
+    const email = reservation.clientEmail?.trim();
+    if (!email?.includes('@')) return { sent: false };
+    if (!this.mail.isConfigured()) return { sent: false };
+
+    const { company, emailSettings } = await this.loadCompanyAndEmailSettings();
+    const data: ResolutionEmailData = {
+      ...(await this.resolutionEmailBase(reservation)),
+      brandName: company?.brandName ?? DEFAULT_BRAND_NAME,
+      contactEmail: company?.contactEmail ?? '',
+      contactPhone: company?.contactPhone ?? '',
+      amountLabel: this.formatEuros(supplementCents),
+      paymentUrl,
+    };
+
+    await this.mail.send({
+      to: email,
+      subject: `Solde restant à régler — ${reservation.boat.name}`,
+      html: buildSupplementDueEmailHtml(data),
+      text: buildSupplementDueEmailText(data),
+      replyTo: emailSettings?.replyToEmail ?? company?.contactEmail ?? undefined,
+      fromName: emailSettings?.fromName ?? company?.brandName,
+    });
+    return { sent: true };
+  }
+
   async createSupplementCheckoutSession(
     reservationId: string,
     supplementCents: number,
@@ -495,6 +532,20 @@ export class ReservationNotificationsService {
     });
 
     return session.url;
+  }
+
+  /** Montant payé sur une session Checkout (centimes), ou 0 si indisponible. */
+  async getCheckoutSessionPaidCents(sessionId: string | null | undefined): Promise<number> {
+    const sid = sessionId?.trim();
+    if (!sid || !this.stripe.isConfigured()) return 0;
+    try {
+      const summary = await this.stripe.getSessionSummary(sid);
+      if (summary.paymentStatus !== 'paid') return 0;
+      const amount = summary.amountTotalCents ?? 0;
+      return amount >= 50 ? amount : 0;
+    } catch {
+      return 0;
+    }
   }
 
   /**
@@ -542,6 +593,17 @@ export class ReservationNotificationsService {
     const paidAmountCents = validated.paidAmountCents;
 
     if (!wasAlreadyPaid) {
+      const existingDetails = existing.detailsJson;
+      let details: Record<string, unknown> = {};
+      if (existingDetails?.trim()) {
+        try {
+          const parsed = JSON.parse(existingDetails) as Record<string, unknown>;
+          if (parsed && typeof parsed === 'object') details = parsed;
+        } catch {
+          details = {};
+        }
+      }
+      const baselineCents = paidAmountCents ?? validated.paidAmountCents ?? 0;
       await this.prisma.reservation.update({
         where: { id: validated.reservationId },
         data: {
@@ -549,6 +611,11 @@ export class ReservationNotificationsService {
           paymentCapturedAt: capturedAt,
           totalDueCents: validated.expectedAmountCents,
           stripeCheckoutSessionId: sessionId,
+          paymentLinkUrl: null,
+          detailsJson: JSON.stringify({
+            ...details,
+            ...(baselineCents >= 50 ? { onlinePaidBaselineCents: baselineCents } : {}),
+          }),
         },
       });
       await this.persistStripeFeesForSession(sessionId, { reservationId: validated.reservationId });
@@ -867,6 +934,51 @@ export class ReservationNotificationsService {
       where: { id: summary.reservationId },
       data: { stripeCheckoutSessionId: sessionId },
     });
+
+    const reservation = await this.prisma.reservation.findUnique({
+      where: { id: summary.reservationId },
+      include: { extras: { include: { extra: true } } },
+    });
+    if (reservation) {
+      const paidCents = summary.amountTotalCents ?? expectedSupplement;
+      let prevSupplement = 0;
+      if (reservation.detailsJson?.trim()) {
+        try {
+          const parsed = JSON.parse(reservation.detailsJson) as { supplementPaidCents?: unknown };
+          const n = Number(parsed?.supplementPaidCents);
+          if (Number.isFinite(n) && n > 0) prevSupplement = Math.round(n);
+        } catch {
+          prevSupplement = 0;
+        }
+      }
+      let details: Record<string, unknown> = {};
+      if (reservation.detailsJson?.trim()) {
+        try {
+          const parsed = JSON.parse(reservation.detailsJson) as Record<string, unknown>;
+          if (parsed && typeof parsed === 'object') details = parsed;
+        } catch {
+          details = {};
+        }
+      }
+      await this.prisma.reservation.update({
+        where: { id: summary.reservationId },
+        data: {
+          totalDueCents: 0,
+          paymentLinkUrl: null,
+          detailsJson: JSON.stringify({
+            ...details,
+            supplementPaidCents: prevSupplement + paidCents,
+          }),
+        },
+      });
+      try {
+        await this.rentalContracts.refreshSignedContractAfterScheduleChange(summary.reservationId);
+      } catch (err) {
+        this.logger.warn(
+          `Contrat signé non actualisé après supplément Stripe (${summary.reservationId}): ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    }
     return true;
   }
 

@@ -3,6 +3,7 @@ import {
   createBoatSchema,
   createFleetSchema,
   patchBoatDepositSchema,
+  boatEmplacementValidationError,
   UserRole,
   type AuthUser,
 } from '@bleu-calanque/shared';
@@ -26,6 +27,19 @@ function trimOrThrow(v: string, label: string) {
   const x = v.trim();
   if (!x) throw new BadRequestException(`${label} requis.`);
   return x;
+}
+
+function assertBoatDetailsEmplacement(detailsJson: string | null | undefined) {
+  if (!detailsJson?.trim()) return;
+  try {
+    const parsed = JSON.parse(detailsJson) as { generales?: { emplacement?: unknown } };
+    const raw =
+      typeof parsed.generales?.emplacement === 'string' ? parsed.generales.emplacement : '';
+    const err = boatEmplacementValidationError(raw);
+    if (err) throw new BadRequestException(err);
+  } catch (e) {
+    if (e instanceof BadRequestException) throw e;
+  }
 }
 
 @Injectable()
@@ -92,6 +106,7 @@ export class CatalogService {
       input.coverPhotoIndex ?? 0,
     );
 
+    assertBoatDetailsEmplacement(input.detailsJson);
     const detailsJson = await processBoatDetailsJson(input.detailsJson, this.media);
 
     const boat = await this.prisma.boat.create({
@@ -141,6 +156,7 @@ export class CatalogService {
       { retainUrls: exists.photos.map((p) => p.url) },
     );
 
+    assertBoatDetailsEmplacement(input.detailsJson);
     const detailsJson = await processBoatDetailsJson(input.detailsJson, this.media, exists.detailsJson);
 
     const data: Prisma.BoatUncheckedUpdateInput = {

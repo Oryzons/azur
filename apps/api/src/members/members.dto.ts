@@ -1,4 +1,5 @@
 import { IsBoolean, IsEmail, IsIn, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { BOAT_LICENSE_TYPE_VALUES } from '@bleu-calanque/shared';
 
 export const MEMBER_ROLE_VALUES = ['ADMIN', 'AGENT', 'OWNER', 'CLIENT', 'DAF'] as const;
 
@@ -61,7 +62,15 @@ export class CreateMemberDto {
   @IsOptional() @IsString()
   clientIdNumber?: string | null;
   @IsOptional() @IsString()
+  clientIdType?: string | null;
+  @IsOptional() @IsString()
   licenseNumber?: string | null;
+  @IsOptional() @IsString() @IsIn(BOAT_LICENSE_TYPE_VALUES as unknown as string[])
+  licenseType?: (typeof BOAT_LICENSE_TYPE_VALUES)[number] | null;
+  @IsOptional() @IsString()
+  licenseCountry?: string | null;
+  @IsOptional() @IsString()
+  licenseYear?: string | null;
   @IsOptional() @IsString()
   cniFrontUrl?: string | null;
   @IsOptional() @IsString()

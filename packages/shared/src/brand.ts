@@ -2,4 +2,4 @@
 export const DEFAULT_BRAND_NAME = 'Bleu Calanque';
 
 /** Nom de la plateforme de gestion (back-office staff / propriétaires). */
-export const PLATFORM_NAME = 'Azur';
+export const PLATFORM_NAME = 'Azure';

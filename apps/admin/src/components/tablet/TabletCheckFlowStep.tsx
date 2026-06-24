@@ -1,9 +1,10 @@
 import { useEffect } from 'react';
-import { Camera, CheckCircle2, ChevronRight } from 'lucide-react';
+import { Camera, Check, ChevronDown } from 'lucide-react';
 import { CheckFlowGuideIllustration } from '@/components/tablet/CheckFlowGuideIllustration';
 import { SignaturePad } from '@/components/tablet/SignaturePad';
 import { TabletPhotoCapture } from '@/components/tablet/TabletPhotoCapture';
 import { resolveCheckFlowGuide } from '@/lib/checkFlowPhotoGuide';
+import { CF } from '@/lib/tabletCheckFlowTheme';
 import { questionOptions, type CheckFlowQuestion } from '@/stores/checkFlow';
 
 type AnswerValue = { text?: string; photos?: string[]; comment?: string };
@@ -27,19 +28,24 @@ export function TabletCheckFlowStep(props: Props) {
     q.questionType !== 'PHOTO' || !q.required || photoCount >= q.photoMinCount;
 
   return (
-    <div className="space-y-4">
-      {/* Hero 3D */}
-      <div className="overflow-hidden rounded-3xl shadow-xl shadow-sky-900/15 ring-1 ring-white/60">
-        <div className="flex items-center justify-between gap-3 bg-gradient-to-r from-[#0c4a6e] to-[#1e5f8f] px-4 py-3">
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-sky-200/90">
-              Étape {stepIndex + 1} / {stepTotal}
-            </p>
-            <p className="mt-0.5 text-sm font-semibold text-white">{guide.title}</p>
+    <div className="space-y-5">
+      <header>
+        <p className={CF.label}>
+          Étape {stepIndex + 1} sur {stepTotal}
+        </p>
+        <h2 className={`mt-2 ${CF.title}`}>{q.label}</h2>
+        {q.helpText ? <p className={CF.subtitle}>{q.helpText}</p> : null}
+      </header>
+
+      <div className={CF.hero}>
+        <div className="flex items-center justify-between gap-3 border-b border-zinc-100 px-4 py-3">
+          <div className="min-w-0">
+            <p className={CF.label}>Guide visuel</p>
+            <p className="mt-0.5 truncate text-sm font-semibold text-zinc-800">{guide.title}</p>
           </div>
           {photoComplete && q.questionType === 'PHOTO' && photoCount > 0 ? (
-            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-400/20 px-2.5 py-1 text-[11px] font-bold text-emerald-100 ring-1 ring-emerald-300/40">
-              <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />
+            <span className={CF.badge}>
+              <Check className="h-3 w-3" strokeWidth={3} aria-hidden />
               {photoCount}/{q.photoMaxCount}
             </span>
           ) : null}
@@ -47,35 +53,26 @@ export function TabletCheckFlowStep(props: Props) {
         <CheckFlowGuideIllustration kind={guide.kind} />
       </div>
 
-      {/* Conseils */}
-      <div className="rounded-2xl border border-sky-100 bg-white/90 p-4 shadow-sm backdrop-blur-sm">
-        <ul className="space-y-2">
-          {guide.tips.map((tip, i) => (
-            <li key={tip} className="flex gap-3 text-sm leading-snug text-zinc-700">
-              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-sky-100 text-[11px] font-bold text-sky-800">
-                {i + 1}
-              </span>
-              <span className="pt-0.5">{tip}</span>
-            </li>
-          ))}
-        </ul>
-      </div>
-
-      {/* Formulaire */}
-      <div className="space-y-4 rounded-3xl border border-zinc-200/80 bg-white p-5 shadow-sm">
-        <div>
-          <h2 className="text-xl font-bold tracking-tight text-zinc-900">
-            {q.label}
-            {q.required ? <span className="text-red-500"> *</span> : null}
-          </h2>
-          {q.helpText ? <p className="mt-1.5 text-sm text-zinc-500">{q.helpText}</p> : null}
+      {guide.tips.length > 0 ? (
+        <div className={CF.cardSoft}>
+          <p className={CF.label}>À vérifier</p>
+          <ul className="mt-3 space-y-2.5">
+            {guide.tips.map((tip) => (
+              <li key={tip} className="flex gap-3 text-sm leading-snug text-zinc-600">
+                <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-zinc-400" aria-hidden />
+                <span>{tip}</span>
+              </li>
+            ))}
+          </ul>
         </div>
+      ) : null}
 
+      <div className={`${CF.card} space-y-5`}>
         {q.questionType === 'TEXT' ? (
           <textarea
-            className="w-full min-h-[3.5rem] rounded-2xl border border-zinc-200 bg-zinc-50/80 px-4 py-3 text-base text-zinc-900 outline-none transition focus:border-sky-400 focus:bg-white focus:ring-2 focus:ring-sky-400/20"
+            className={`${CF.input} min-h-[5rem] resize-none`}
             rows={4}
-            placeholder="Saisissez votre réponse…"
+            placeholder="Votre réponse…"
             value={value?.text ?? ''}
             onChange={(e) => onText(e.target.value)}
           />
@@ -83,39 +80,46 @@ export function TabletCheckFlowStep(props: Props) {
 
         {q.questionType === 'BOOLEAN' ? (
           <div className="grid grid-cols-2 gap-3">
-            {(['true', 'false'] as const).map((v) => (
-              <button
-                key={v}
-                type="button"
-                onClick={() => onText(v)}
-                className={[
-                  'min-h-[3.5rem] rounded-2xl py-3.5 text-base font-bold touch-manipulation transition active:scale-[0.98]',
-                  value?.text === v
-                    ? 'bg-gradient-to-br from-sky-600 to-sky-800 text-white shadow-lg shadow-sky-900/20'
-                    : 'border border-zinc-200 bg-zinc-50 text-zinc-600 hover:bg-zinc-100',
-                ].join(' ')}
-              >
-                {v === 'true' ? 'Oui' : 'Non'}
-              </button>
-            ))}
+            {(['true', 'false'] as const).map((v) => {
+              const selected = value?.text === v;
+              return (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => onText(v)}
+                  className={[
+                    CF.optionBase,
+                    selected ? CF.optionSelected : CF.optionIdle,
+                  ].join(' ')}
+                >
+                  {selected ? (
+                    <Check className="absolute right-3 top-3 h-4 w-4" strokeWidth={2.5} aria-hidden />
+                  ) : null}
+                  {v === 'true' ? 'Oui' : 'Non'}
+                </button>
+              );
+            })}
           </div>
         ) : null}
 
         {q.questionType === 'SELECT' ? (
           <div className="relative">
             <select
-              className="w-full min-h-[3.5rem] appearance-none rounded-2xl border border-zinc-200 bg-zinc-50/80 px-4 py-3 pr-10 text-base text-zinc-900 outline-none focus:border-sky-400 focus:bg-white focus:ring-2 focus:ring-sky-400/20"
+              className={CF.select}
               value={value?.text ?? ''}
               onChange={(e) => onText(e.target.value)}
             >
-              <option value="">— Choisir —</option>
+              <option value="">Choisir une option</option>
               {opts.map((o) => (
                 <option key={o} value={o}>
                   {o}
                 </option>
               ))}
             </select>
-            <ChevronRight className="pointer-events-none absolute right-4 top-1/2 h-5 w-5 -translate-y-1/2 rotate-90 text-zinc-400" />
+            <ChevronDown
+              className="pointer-events-none absolute right-4 top-1/2 h-5 w-5 -translate-y-1/2 text-zinc-400"
+              aria-hidden
+            />
           </div>
         ) : null}
 
@@ -123,8 +127,8 @@ export function TabletCheckFlowStep(props: Props) {
 
         {q.questionType === 'PHOTO' ? (
           <div className="space-y-4">
-            <div className="flex items-center gap-2 rounded-xl bg-sky-50 px-3 py-2.5 text-sm text-sky-900">
-              <Camera className="h-4 w-4 shrink-0 text-sky-600" aria-hidden />
+            <div className="flex items-center gap-2.5 rounded-2xl bg-zinc-100 px-3.5 py-3 text-sm text-zinc-700">
+              <Camera className="h-4 w-4 shrink-0 text-zinc-500" aria-hidden />
               <span>
                 {q.photoMinCount === q.photoMaxCount
                   ? `${q.photoMinCount} photo${q.photoMinCount > 1 ? 's' : ''} requise${q.photoMinCount > 1 ? 's' : ''}`
@@ -132,11 +136,14 @@ export function TabletCheckFlowStep(props: Props) {
               </span>
             </div>
             {photoCount > 0 ? (
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-3 gap-2.5">
                 {(value?.photos ?? []).map((src, i) => (
-                  <div key={i} className="relative aspect-square overflow-hidden rounded-2xl ring-2 ring-emerald-400/60">
+                  <div
+                    key={i}
+                    className="relative aspect-square overflow-hidden rounded-2xl ring-1 ring-zinc-200"
+                  >
                     <img src={src} alt={`Photo ${i + 1}`} className="h-full w-full object-cover" />
-                    <span className="absolute left-1.5 top-1.5 rounded-md bg-black/50 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                    <span className="absolute left-2 top-2 rounded-full bg-zinc-900/75 px-2 py-0.5 text-[10px] font-bold text-white">
                       {i + 1}
                     </span>
                   </div>
@@ -154,11 +161,11 @@ export function TabletCheckFlowStep(props: Props) {
         ) : null}
 
         <label className="block">
-          <span className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Commentaire</span>
+          <span className={CF.label}>Commentaire</span>
           <textarea
-            className="mt-1.5 w-full rounded-2xl border border-zinc-200 bg-zinc-50/60 px-4 py-3 text-sm text-zinc-900 outline-none focus:border-sky-400 focus:bg-white focus:ring-2 focus:ring-sky-400/15"
+            className={`${CF.input} mt-2 min-h-[4.5rem] resize-none text-sm`}
             rows={2}
-            placeholder="Précision optionnelle…"
+            placeholder="Optionnel"
             value={value?.comment ?? ''}
             onChange={(e) => onComment(e.target.value)}
           />
@@ -179,13 +186,13 @@ function FuelGaugeField(props: { value?: string; onChange: (v: string) => void }
 
   return (
     <div className="space-y-4">
-      <div className="relative h-14 overflow-hidden rounded-2xl border border-amber-200/80 bg-white shadow-inner">
+      <div className="relative h-16 overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-50">
         <div
-          className="absolute inset-y-0 left-0 bg-gradient-to-r from-red-500 via-amber-400 to-emerald-500 transition-[width] duration-200"
+          className="absolute inset-y-0 left-0 bg-gradient-to-r from-red-400 via-amber-300 to-emerald-400 transition-[width] duration-300 ease-out"
           style={{ width: `${level}%` }}
         />
-        <div className="absolute inset-0 flex items-center justify-center text-lg font-black text-zinc-900 drop-shadow-sm">
-          {level} %
+        <div className="absolute inset-0 flex items-center justify-center text-xl font-bold tabular-nums text-zinc-900">
+          {level}%
         </div>
       </div>
       <input
@@ -195,11 +202,11 @@ function FuelGaugeField(props: { value?: string; onChange: (v: string) => void }
         step={5}
         value={level}
         onChange={(e) => onChange(e.target.value)}
-        className="h-3 w-full cursor-pointer appearance-none rounded-full bg-zinc-200 accent-amber-500"
+        className="h-2 w-full cursor-pointer appearance-none rounded-full bg-zinc-200 accent-zinc-900"
         aria-label="Niveau d'essence"
       />
-      <div className="flex justify-between text-xs font-medium text-zinc-500">
-        <span>Réservoir vide</span>
+      <div className="flex justify-between text-xs font-medium text-zinc-400">
+        <span>Vide</span>
         <span>Plein</span>
       </div>
     </div>
@@ -219,21 +226,22 @@ export function TabletCheckFlowSignatures(props: Readonly<{
     props;
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-2xl bg-gradient-to-r from-[#0c4a6e] to-[#1e5f8f] px-4 py-3">
-        <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-sky-200/90">
-          Étape {stepIndex + 1} / {stepTotal}
+    <div className="space-y-5">
+      <header>
+        <p className={CF.label}>
+          Étape {stepIndex + 1} sur {stepTotal}
         </p>
-        <p className="mt-0.5 text-sm font-semibold text-white">Signatures finales</p>
+        <h2 className={`mt-2 ${CF.title}`}>Signatures</h2>
+        <p className={CF.subtitle}>
+          Le client et le loueur valident ce {kind === 'CHECK_IN' ? 'départ' : 'retour'}.
+        </p>
+      </header>
+
+      <div className={`${CF.card} space-y-6`}>
+        <SignaturePad label="Signature client" value={clientSignature} onChange={onClientChange} />
+        <div className="h-px bg-zinc-100" />
+        <SignaturePad label="Signature loueur" value={loueurSignature} onChange={onLoueurChange} />
       </div>
-      <section className="space-y-4 rounded-3xl border border-zinc-200/80 bg-white p-5 shadow-sm">
-        <h2 className="text-xl font-bold tracking-tight text-zinc-900">Validation</h2>
-        <p className="text-sm text-zinc-500">
-          Le client et le loueur signent pour valider ce {kind === 'CHECK_IN' ? 'check-in' : 'check-out'}.
-        </p>
-        <SignaturePad label="Signature du client" value={clientSignature} onChange={onClientChange} />
-        <SignaturePad label="Signature du loueur" value={loueurSignature} onChange={onLoueurChange} />
-      </section>
     </div>
   );
 }

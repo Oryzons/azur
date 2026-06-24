@@ -1,9 +1,9 @@
 import { useEffect, useRef } from 'react';
 
 function prepareCanvas(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) {
-  ctx.fillStyle = '#ffffff';
+  ctx.fillStyle = '#fafafa';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.strokeStyle = '#0f172a';
+  ctx.strokeStyle = '#18181b';
   ctx.lineWidth = 2.5;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
@@ -37,7 +37,7 @@ export function SignaturePad({ label, value, onChange }: Props) {
       if (!c || !context) return;
       prepareCanvas(context, c);
       context.drawImage(img, 0, 0, c.width, c.height);
-      context.strokeStyle = '#0f172a';
+      context.strokeStyle = '#18181b';
       context.lineWidth = 2.5;
       context.lineCap = 'round';
       context.lineJoin = 'round';
@@ -92,13 +92,13 @@ export function SignaturePad({ label, value, onChange }: Props) {
   }
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-sm font-semibold text-zinc-800">{label}</span>
+        <span className="text-sm font-semibold text-zinc-900">{label}</span>
         <button
           type="button"
           onClick={clear}
-          className="text-xs font-semibold text-[#416B9F] hover:underline"
+          className="rounded-full px-3 py-1 text-xs font-semibold text-zinc-600 transition hover:bg-zinc-100"
         >
           Effacer
         </button>
@@ -107,16 +107,16 @@ export function SignaturePad({ label, value, onChange }: Props) {
         ref={canvasRef}
         width={600}
         height={200}
-        className="w-full touch-manipulation rounded-2xl border border-zinc-200/90 bg-white shadow-inner [touch-action:none]"
+        className="w-full touch-manipulation rounded-2xl border border-zinc-200/80 bg-zinc-50 shadow-inner [touch-action:none]"
         onPointerDown={start}
         onPointerMove={move}
         onPointerUp={end}
         onPointerLeave={end}
       />
       {value ? (
-        <p className="text-xs font-medium text-emerald-700">Signature capturée</p>
+        <p className="text-xs font-medium text-emerald-700">Signature enregistrée</p>
       ) : (
-        <p className="text-xs text-zinc-500">Signez dans le cadre ci-dessus</p>
+        <p className="text-xs text-zinc-400">Signez dans le cadre ci-dessus</p>
       )}
     </div>
   );

@@ -24,6 +24,7 @@ import { TabletLayout } from '@/layouts/TabletLayout';
 import { TabletTodayPage } from '@/pages/tablet/TabletTodayPage';
 import { TabletReservationsPage } from '@/pages/tablet/TabletReservationsPage';
 import { TabletCheckFlowPage } from '@/pages/tablet/TabletCheckFlowPage';
+import { TabletReservationDetailPage } from '@/pages/tablet/TabletReservationDetailPage';
 import { TabletCalendarPage } from '@/pages/tablet/TabletCalendarPage';
 import { TabletProfilePage } from '@/pages/tablet/TabletProfilePage';
 import { RootRedirect } from '@/components/RootRedirect';
@@ -51,6 +52,7 @@ export default function App() {
             <Route path="aujourdhui" element={<TabletTodayPage />} />
             <Route path="reservations" element={<TabletReservationsPage />} />
             <Route path="calendrier" element={<TabletCalendarPage />} />
+            <Route path="reservation/:reservationId" element={<TabletReservationDetailPage />} />
             <Route path="check-in/:reservationId" element={<TabletCheckFlowPage />} />
             <Route path="check-out/:reservationId" element={<TabletCheckFlowPage />} />
           </Route>

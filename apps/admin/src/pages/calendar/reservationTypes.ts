@@ -41,4 +41,8 @@ export type Reservation = {
   /** Frais Stripe (paiement unique sans échéances). */
   stripeFeeCents?: number | null;
   stripeNetCents?: number | null;
+  /** Lien Stripe actif (supplément ou paiement en attente). */
+  paymentLinkUrl?: string | null;
+  /** Avoir client déjà imputé (centimes). */
+  storeCreditAppliedCents?: number | null;
 };

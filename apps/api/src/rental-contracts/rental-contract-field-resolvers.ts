@@ -1,4 +1,4 @@
-import { filterContractRequiredDocuments } from '@bleu-calanque/shared';
+import { boatLicenseTypeLabel, filterContractRequiredDocuments, normalizeBoatLicenseType } from '@bleu-calanque/shared';
 
 /** Équipements de sécurité (groupe « Sécurité » fiche bateau). */
 const SECURITE_LABELS: Record<string, string> = {
@@ -252,10 +252,15 @@ export function parseReservationContractFields(detailsJson: string | null): Rese
 
 export function resolveIdentityForContract(
   fields: ReservationContractFields,
-  member: { cniFrontUrl: string | null; cniBackUrl: string | null } | null,
+  member: {
+    cniFrontUrl: string | null;
+    cniBackUrl: string | null;
+    clientIdType?: string | null;
+    clientIdNumber?: string | null;
+  } | null,
 ): { idType: string; idNumber: string } {
-  const type = fields.clientIdType?.trim() || "Carte d'identité";
-  const num = fields.clientIdNumber?.trim();
+  const type = fields.clientIdType?.trim() || member?.clientIdType?.trim() || "Carte d'identité";
+  const num = fields.clientIdNumber?.trim() || member?.clientIdNumber?.trim();
   if (num) return { idType: type, idNumber: num };
   const hasFile = Boolean(member?.cniFrontUrl?.trim() || member?.cniBackUrl?.trim());
   if (hasFile) {
@@ -266,15 +271,25 @@ export function resolveIdentityForContract(
 
 export function resolveLicenseForContract(
   fields: ReservationContractFields,
-  member: { boatLicenseFrontUrl: string | null; boatLicenseBackUrl: string | null } | null,
+  member: {
+    boatLicenseFrontUrl: string | null;
+    boatLicenseBackUrl: string | null;
+    licenseType?: string | null;
+    licenseNumber?: string | null;
+    licenseCountry?: string | null;
+  } | null,
   defaultCountry: string | null,
 ): { licenseType: string; licenseNumber: string; licenseCountry: string } {
-  const type = fields.licenseType?.trim() || '';
-  const num = fields.licenseNumber?.trim() || '';
-  const country = fields.licenseCountry?.trim() || defaultCountry?.trim() || 'France';
+  const type = fields.licenseType?.trim() || member?.licenseType?.trim() || '';
+  const num = fields.licenseNumber?.trim() || member?.licenseNumber?.trim() || '';
+  const country =
+    fields.licenseCountry?.trim() || member?.licenseCountry?.trim() || defaultCountry?.trim() || 'France';
   const hasFile = Boolean(member?.boatLicenseFrontUrl?.trim() || member?.boatLicenseBackUrl?.trim());
 
-  let licenseType = type || (hasFile ? 'Permis bateau' : '');
+  const normalizedType = normalizeBoatLicenseType(type);
+  let licenseType = normalizedType
+    ? boatLicenseTypeLabel(normalizedType)
+    : boatLicenseTypeLabel(type) || type || (hasFile ? 'Permis bateau' : '');
   let licenseNumber = num;
   if (!licenseNumber && hasFile) {
     licenseNumber = 'Document enregistré (numéro non renseigné)';
