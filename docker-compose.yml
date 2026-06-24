@@ -1,12 +1,9 @@
-# Déploiement Hostinger — Compose manuel ou "Compose from URL"
-# Image : ghcr.io/oryzons/azur:latest
-#
-# Variables sensibles : les renseigner dans l'UI Hostinger (section environment)
-# ou via un fichier .env sur le VPS (ne pas committer).
+# Déploiement Hostinger — Compose from URL
+# Secrets : les ajouter dans l'UI Hostinger (Update du projet), pas ici.
 
 services:
   app:
-    image: ghcr.io/oryzons/azur:latest
+    image: oryzons/azur:latest
     restart: unless-stopped
     ports:
       - "3001:3001"
@@ -16,14 +13,6 @@ services:
       NODE_ENV: production
       API_PORT: 3001
       DATABASE_URL: file:/data/azur.db
-      # Renseigner dans Hostinger :
-      # ADMIN_URL: https://ton-domaine.com
-      # PUBLIC_APP_URL: https://ton-domaine.com
-      # JWT_ACCESS_SECRET: ...
-      # JWT_REFRESH_SECRET: ...
-      # RESEND_API_KEY: ...
-      # STRIPE_SECRET_KEY: ...
-      # STRIPE_WEBHOOK_SECRET: ...
 
 volumes:
   azur_data:
