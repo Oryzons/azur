@@ -14,7 +14,11 @@ function isSqliteBusyError(e: unknown): boolean {
 
 /** Attente active côté SQLite quand un autre processus tient un verrou (ms). */
 async function configureSqliteBusyTimeout(client: PrismaClient) {
-  await client.$queryRawUnsafe('PRAGMA busy_timeout = 60000');
+  // PRAGMA n'existe que sur SQLite
+  const url = process.env.DATABASE_URL ?? '';
+  if (url.startsWith('file:') || url.startsWith('sqlite:')) {
+    await client.$queryRawUnsafe('PRAGMA busy_timeout = 60000');
+  }
 }
 
 async function runWithDbRetries<T>(label: string, fn: () => Promise<T>, maxAttempts = 8): Promise<T> {

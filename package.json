@@ -5,6 +5,7 @@
   "packageManager": "npm@10.9.3",
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
+    "start": "node apps/api/dist/main.js",
     "dev": "concurrently -k -n api,admin -c blue,green \"npm run dev --workspace=@bleu-calanque/api\" \"wait-on tcp:3001 && npm run dev --workspace=@bleu-calanque/admin\"",
     "dev:api": "npm run dev --workspace=@bleu-calanque/api",
     "dev:admin": "npm run dev --workspace=@bleu-calanque/admin",

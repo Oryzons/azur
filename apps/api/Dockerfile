@@ -56,7 +56,7 @@ COPY packages/db/package.json ./packages/db/
 COPY packages/shared/package.json ./packages/shared/
 RUN npm ci --omit=dev --ignore-scripts
 
-# Artefacts buildés
+# Artefacts du builder (dist + client Prisma pré-généré)
 COPY --from=builder /app/apps/api/dist ./apps/api/dist
 COPY --from=builder /app/apps/admin/dist ./apps/admin/dist
 COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
