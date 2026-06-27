@@ -12,17 +12,13 @@ services:
     environment:
       NODE_ENV: production
       API_PORT: 3001
-      DATABASE_URL: postgresql://sASEIXMnlijTg8qJ:vom12q0bxOWTloUyzlhaOYZkvUJklpoe@postgresql:5432/azur
+      DATABASE_URL: postgresql://admin_app:mat29pau08@postgresql:5432/azur
       ADMIN_URL: http://187.127.232.142:3001
       PUBLIC_APP_URL: http://187.127.232.142:3001
-      JWT_ACCESS_SECRET: V7pN3xQ9mL2dK8sR5wT1zY6aF4uH0cB9eG
-      JWT_REFRESH_SECRET: a7KpQ9vL2mR8xZ4nT6cD1yH5jF0sB3eW8uN6rS2kX9pV4dL7mZ1qJ6hT0wC5fY8
       RESEND_API_KEY: re_UpiSAMgV_NN3f1PEvwkNWLj7k63yHWZ8L
       RESEND_FROM_EMAIL: onboarding@resend.dev
       RESEND_FROM_NAME: Bleu Calanque
-      STRIPE_SECRET_KEY: sk_test_51TYoIV2zJvUKwnGar0Z2Pux5KLYKPxRgXR4m9mRoCTBXYsmJJAAhqAEYdFI30VQAllQXGSztE7nIEJJpqmyDPaU300U2JKBrTV
-      STRIPE_WEBHOOK_SECRET: whsec_f530e278424599d56214649ae166f614503a91fcd44ca128199b028cd84ed108
-
+     
 networks:
   postgresql-engb_default:
     external: true

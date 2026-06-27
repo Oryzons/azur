@@ -1,0 +1,32 @@
+# Dev local — Postgres uniquement
+#
+# Lance un Postgres local sur le port 5433 pour le développement.
+# L'app NestJS et le frontend Vite tournent directement sur ton Mac (npm run dev).
+#
+# Usage :
+#   docker compose -f docker-compose.dev.yml up -d
+#   docker compose -f docker-compose.dev.yml down
+#
+# DATABASE_URL dans apps/api/.env et packages/db/.env :
+#   postgresql://bleu:bleu@localhost:5433/bleu_calanque
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    ports:
+      - '5433:5432'
+    environment:
+      POSTGRES_DB: bleu_calanque
+      POSTGRES_USER: bleu
+      POSTGRES_PASSWORD: bleu
+    volumes:
+      - bleu_postgres_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U bleu -d bleu_calanque']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  bleu_postgres_dev:
